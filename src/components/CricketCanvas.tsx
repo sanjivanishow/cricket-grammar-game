@@ -1,12 +1,12 @@
 // ============================================================
-// Grammar Cricket - Google-Style Raw Array Engine
-// Uses exact coordinate arrays from cricket17.js
+// Grammar Cricket - Authentic Google Doodle Engine (Vite-Safe)
+// Uses raw imports to bypass network fetch failures entirely.
 // ============================================================
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { CricketOutcome } from '../engine/GameState';
 
-// @ts-ignore - Tells TypeScript to allow the SVG import
-import spriteUrl from '../assets/svg-sprite.svg';
+// @ts-ignore - Tells TypeScript to allow the raw string import
+import rawSvgString from '../assets/svg-sprite.svg?raw'; 
 
 interface CricketCanvasProps {
   outcome: CricketOutcome | null;
@@ -21,6 +21,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spriteRef = useRef<HTMLImageElement | null>(null);
+  
   const [spriteLoaded, setSpriteLoaded] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   
@@ -37,17 +38,13 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   const BATTING_X = W * 0.25;
   const BOWLING_X = W * 0.75;
 
-  // ============================================================
-  // EXACT GOOGLE ARRAYS [X, Y, Width, Height] 
-  // From cricket17.js (Uc, Vc, Wc, etc.)
-  // ============================================================
   const G_SPRITES = {
-    batter_idle: [20, 146, 116, 193],     // Wc
-    bowler_idle: [20, 1262, 49, 81],      // cd
-    bowler_windup: [20, 1550, 130, 212],  // ed
-    bowler_throw: [20, 1783, 130, 225],   // fd
-    stump: [20, 5705, 3, 21],             // Dd
-    bails: [20, 9914, 38, 31],            // ge
+    batter_idle: [20, 146, 116, 193],
+    bowler_idle: [20, 1262, 49, 81],
+    bowler_windup: [20, 1550, 130, 212],
+    bowler_throw: [20, 1783, 130, 225],
+    stump: [20, 5705, 3, 21],
+    bails: [20, 9914, 38, 31],
     crowd_1: [20, 7058, 124, 184],
     crowd_2: [20, 7262, 124, 184],
     tree: [20, 810, 66, 432],
@@ -64,49 +61,41 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     }))
   );
 
-  // Load and patch the SVG to prevent blank screens in Vite
+  // 1. Process SVG Synchronously from the Bundle using the ?raw string
   useEffect(() => {
-    let active = true;
-    const loadSprite = async () => {
-      try {
-        let svgText = "";
-        if (spriteUrl.startsWith('data:')) {
-          const parts = spriteUrl.split(',');
-          const dataContent = parts.slice(1).join(',');
-          svgText = parts[0].includes('base64') ? atob(dataContent) : decodeURIComponent(dataContent);
-        } else {
-          const res = await fetch(spriteUrl);
-          if (!res.ok) throw new Error("Fetch failed");
-          svgText = await res.text();
-        }
-
-        // Fix Canvas blank screen bug by forcing dimensions
-        if (!svgText.includes('width=')) {
-          svgText = svgText.replace('<svg', '<svg width="10000" height="10000"');
-        }
-
-        const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        
-        const img = new Image();
-        img.onload = () => {
-          if (active) {
-            spriteRef.current = img;
-            setSpriteLoaded(true);
-            URL.revokeObjectURL(url);
-          }
-        };
-        img.onerror = () => { if (active) setErrorMsg("Corrupt SVG Data"); };
-        img.src = url;
-      } catch (err) {
-        if (active) setErrorMsg("SVG missing from src/assets/");
+    try {
+      if (!rawSvgString || !rawSvgString.includes('<svg')) {
+        throw new Error("Raw SVG string is empty or invalid.");
       }
-    };
-    loadSprite();
-    return () => { active = false; };
+
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawSvgString, "image/svg+xml");
+      
+      const parserError = doc.querySelector("parsererror");
+      if (parserError) throw new Error("XML Parsing Failed");
+
+      // Force dimensions so Canvas can crop it without returning blank!
+      doc.documentElement.setAttribute("width", "10000");
+      doc.documentElement.setAttribute("height", "10000");
+
+      const patchedSvg = new XMLSerializer().serializeToString(doc);
+      const blob = new Blob([patchedSvg], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      
+      const img = new Image();
+      img.onload = () => {
+        spriteRef.current = img;
+        setSpriteLoaded(true);
+      };
+      img.onerror = () => setErrorMsg("Browser failed to decode the SVG image.");
+      img.src = url;
+      
+    } catch (err: any) {
+      setErrorMsg(err.message || "Unknown SVG processing error.");
+    }
   }, []);
 
-  // Google's specific draw style using the exact arrays
+  // 2. Rendering Functions
   const drawGraphic = (
     ctx: CanvasRenderingContext2D, 
     key: keyof typeof G_SPRITES, 
@@ -121,7 +110,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     if (flip) ctx.scale(-1, 1);
     if (rotate) ctx.rotate(rotate);
     
-    // Google includes a 5px bleed buffer in their math
     ctx.drawImage(
       spriteRef.current, 
       sx - 5, sy - 5, sw + 10, sh + 10,
@@ -131,29 +119,29 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   };
 
   const drawScene = (ctx: CanvasRenderingContext2D, vTime: number) => {
-    // 1. Background
     ctx.fillStyle = '#689f38'; 
     ctx.fillRect(0, 0, W, H);
 
-    // 2. Trees
-    drawGraphic(ctx, 'tree', W * 0.1, H * 0.35, 0.5);
-    drawGraphic(ctx, 'tree', W * 0.85, H * 0.4, 0.6);
+    if (spriteLoaded) {
+      drawGraphic(ctx, 'tree', W * 0.1, H * 0.35, 0.5);
+      drawGraphic(ctx, 'tree', W * 0.85, H * 0.4, 0.6);
+    }
 
-    // 3. Stadium Curve
     ctx.fillStyle = '#8bc34a';
     ctx.beginPath();
     ctx.ellipse(W / 2, H * 0.8, W * 0.9, H * 0.5, 0, Math.PI, 0);
     ctx.fill();
 
-    // 4. Bouncing Crowd
-    crowdData.current.forEach((bug, index) => {
-      const intensity = outcome ? 4 : 1; 
-      const jump = Math.abs(Math.sin((vTime + bug.offset) * 0.005 * intensity)) * 25 * intensity;
-      const key = (Math.floor(vTime / 200) + index) % 2 === 0 ? 'crowd_1' : 'crowd_2';
-      drawGraphic(ctx, key, bug.x, bug.y - jump, bug.scale);
-    });
+    if (spriteLoaded) {
+      crowdData.current.forEach((bug, index) => {
+        const intensity = outcome ? 4 : 1; 
+        const jump = Math.abs(Math.sin((vTime + bug.offset) * 0.005 * intensity)) * 25 * intensity;
+        const key = (Math.floor(vTime / 200) + index) % 2 === 0 ? 'crowd_1' : 'crowd_2';
+        drawGraphic(ctx, key, bug.x, bug.y - jump, bug.scale);
+      });
+    }
 
-    // 5. Pitch & Creases
+    // Draw Pitch and Creases even if sprite hasn't loaded yet!
     ctx.fillStyle = '#c5a365';
     ctx.beginPath(); ctx.ellipse(W / 2, PITCH_Y, 280, 50, 0, 0, Math.PI * 2); ctx.fill();
     
@@ -163,7 +151,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.beginPath(); ctx.moveTo(BOWLING_X, PITCH_Y - 40); ctx.lineTo(BOWLING_X, PITCH_Y + 40); ctx.stroke();
   };
 
-  // Main Engine Loop
+  // 3. Main Loop
   const renderEngine = useCallback((timestamp: number) => {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
@@ -176,28 +164,32 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     if (outcome) state.virtualTime += dt;
     const vt = state.virtualTime;
 
-    drawScene(ctx, timestamp); // Pass absolute time to keep crowd moving
+    drawScene(ctx, timestamp); 
 
+    // Visual Error overlay (if the import fails)
     if (errorMsg) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = 'white'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center';
-      ctx.fillText(`⚠️ ${errorMsg}`, W / 2, H / 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#ff4444'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center';
+      ctx.fillText(`⚠️ Error: ${errorMsg}`, W / 2, H / 2);
       return;
     }
 
-    if (!spriteLoaded) return;
+    // Visual Loading overlay
+    if (!spriteLoaded) {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'white'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center';
+      ctx.fillText("Loading Original Google Graphics...", W / 2, H / 2);
+      return;
+    }
 
-    // Default Object States
     let bowlerKey: keyof typeof G_SPRITES = 'bowler_idle';
     let ballX = BOWLING_X - 20;
     let ballY = PITCH_Y - 40;
     let showBall = false;
     let drawBannerText = '';
     const IMPACT = 600;
-
     let shakeX = 0, shakeY = 0;
 
-    // Timeline Routing
     if (outcome) {
       if (vt > 100 && vt < 300) bowlerKey = 'bowler_windup';
       else if (vt >= 300 && vt < IMPACT) {
@@ -232,19 +224,15 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.save();
     ctx.translate(shakeX, shakeY);
 
-    // Non-Striker Wickets
     for(let i=-10; i<=10; i+=10) drawGraphic(ctx, 'stump', BOWLING_X + 25 + i, PITCH_Y, 2.5);
     drawGraphic(ctx, 'bails', BOWLING_X + 25, PITCH_Y - 45, 1.2);
 
-    // Snail
     drawGraphic(ctx, bowlerKey, BOWLING_X, PITCH_Y + 10, 0.9, true);
     
-    // Grasshopper
     const idleBob = (!outcome) ? Math.sin(timestamp * 0.003) * 3 : 0;
     const swingRotation = (outcome && vt > IMPACT - 100 && vt < IMPACT + 300) ? -0.3 : 0;
     drawGraphic(ctx, 'batter_idle', BATTING_X, PITCH_Y + 15 + idleBob, 0.7, false, swingRotation); 
 
-    // Striker Wickets
     if (outcome === 'bowled' && vt >= IMPACT) {
       drawGraphic(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true, -0.4); 
     } else {
@@ -252,7 +240,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       drawGraphic(ctx, 'bails', BATTING_X - 25, PITCH_Y - 45, 1.2);
     }
 
-    // Ball
     if (showBall) {
       ctx.fillStyle = '#bb2222';
       ctx.beginPath(); ctx.arc(ballX, ballY - 5, 8, 0, Math.PI * 2); ctx.fill();
@@ -260,7 +247,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     ctx.restore(); 
 
-    // UI Banner
     if (drawBannerText && vt > IMPACT + 300) {
       const by = H / 2 - 50;
       ctx.fillStyle = '#795548'; ctx.beginPath(); ctx.roundRect(W/2 - 150, by, 300, 80, 10); ctx.fill();
@@ -275,10 +261,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     }
   }, [outcome, spriteLoaded, errorMsg, onAnimationComplete]);
 
-  // Boot the Engine Loop
   useEffect(() => {
-    if (!spriteLoaded && !errorMsg) return;
-    
     const state = engineState.current;
     state.completed = false;
     state.lastTime = 0;
@@ -289,6 +272,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       return;
     }
 
+    // Start the loop IMMEDIATELY, regardless of sprite loading state
     const loop = (timestamp: number) => {
       renderEngine(timestamp);
       if (!engineState.current.completed) {
@@ -298,7 +282,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     engineState.current.animFrame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(engineState.current.animFrame);
-  }, [outcome, spriteLoaded, errorMsg, reducedMotion, renderEngine]);
+  }, [outcome, reducedMotion, renderEngine]);
 
   return (
     <div className="w-full h-full rounded-xl overflow-hidden shadow-2xl border-4 border-[#558b2f]">
