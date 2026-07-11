@@ -1,10 +1,11 @@
 // ============================================================
 // Grammar Cricket - Authentic Google Doodle Graphics
+// Includes the Auto-Patching SVG Loader for Canvas Dimensions
 // ============================================================
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { CricketOutcome } from '../engine/GameState';
 
-// @ts-ignore - This tells TypeScript to stop complaining about importing an SVG!
+// @ts-ignore - Tells TypeScript to allow the SVG import
 import spriteUrl from '../assets/svg-sprite.svg';
 
 interface CricketCanvasProps {
@@ -20,8 +21,12 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spriteRef = useRef<HTMLImageElement | null>(null);
-  const [imageError, setImageError] = useState(false);
   
+  // State
+  const [spriteLoaded, setSpriteLoaded] = useState(false);
+  const [imageError, setImageError] = useState("");
+  
+  // Timers
   const animRef = useRef<number>(0);
   const virtualTimeRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
@@ -44,40 +49,71 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     num_6: { x: 20, y: 2970, w: 53, h: 80 },
   };
 
+  // ============================================================
+  // 1. THE BULLETPROOF SVG LOADER
+  // ============================================================
   useEffect(() => {
-    const img = new Image();
-    img.src = spriteUrl; 
-    
-    img.onload = () => {
-      spriteRef.current = img;
-      setImageError(false);
-      // Kick off the idle animation loop as soon as the image is ready
-      animRef.current = requestAnimationFrame(animate); 
+    let active = true;
+
+    const loadAndPatchSprite = async () => {
+      try {
+        let svgText = "";
+        
+        // Handle Vite inlined data URIs vs normal paths
+        if (spriteUrl.startsWith('data:image/svg+xml')) {
+          const [header, data] = spriteUrl.split(',');
+          svgText = header.includes('base64') ? atob(data) : decodeURIComponent(data);
+        } else {
+          const res = await fetch(spriteUrl);
+          if (!res.ok) throw new Error("Failed to fetch SVG");
+          svgText = await res.text();
+        }
+
+        // MAGIC FIX: Inject massive width and height so Canvas crop works!
+        if (!svgText.includes('width=')) {
+          svgText = svgText.replace('<svg', '<svg width="10000" height="10000"');
+        }
+
+        // Convert back to a Blob URL
+        const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        
+        const img = new Image();
+        img.onload = () => {
+          if (active) {
+            spriteRef.current = img;
+            setSpriteLoaded(true);
+          }
+        };
+        img.onerror = () => { if (active) setImageError("Failed to decode patched SVG."); };
+        img.src = url;
+
+      } catch (err) {
+        console.error(err);
+        if (active) setImageError("Error loading SVG file.");
+      }
     };
 
-    img.onerror = () => {
-      console.error("Failed to load svg-sprite.svg!");
-      setImageError(true);
-    };
-
-    return () => cancelAnimationFrame(animRef.current);
+    loadAndPatchSprite();
+    return () => { active = false; };
   }, []);
 
+  // ============================================================
+  // 2. THE RENDER ENGINE
+  // ============================================================
   const drawSprite = (
     ctx: CanvasRenderingContext2D, 
     spriteName: keyof typeof SPRITES, 
-    dx: number, 
-    dy: number, 
-    scale: number = 1,
-    flip: boolean = false
+    dx: number, dy: number, 
+    scale: number = 1, flip: boolean = false
   ) => {
     if (!spriteRef.current) return;
-    
     const s = SPRITES[spriteName];
     ctx.save();
     ctx.translate(dx, dy);
     if (flip) ctx.scale(-1, 1);
     
+    // The -5 and +10 handles the exact padding Google used in their sheet
     ctx.drawImage(
       spriteRef.current, 
       s.x - 5, s.y - 5, s.w + 10, s.h + 10,
@@ -103,14 +139,12 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
   const drawOriginalBall = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
     ctx.fillStyle = '#bb2222';
-    ctx.beginPath();
-    ctx.arc(x, y - 5, 8, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y - 5, 8, 0, Math.PI * 2); ctx.fill();
   };
 
-  const animate = useCallback((timestamp: number) => {
+  const renderFrame = useCallback((timestamp: number) => {
     const canvas = canvasRef.current;
-    if (!canvas || !spriteRef.current) return;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -118,23 +152,25 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     const dt = Math.min(timestamp - lastTimeRef.current, 50);
     lastTimeRef.current = timestamp;
 
+    // Only advance virtual time if an action is playing
+    if (outcome) virtualTimeRef.current += dt;
+    const vTime = virtualTimeRef.current;
+
     drawEnvironment(ctx);
 
-    // Error rendering fallback
+    // Show explicit error if fetching failed
     if (imageError) {
       ctx.fillStyle = 'white';
       ctx.font = 'bold 24px Arial';
       ctx.textAlign = 'center';
-      ctx.fillText("⚠️ ERROR: Cannot find src/assets/svg-sprite.svg", W / 2, H / 2);
+      ctx.fillText(`⚠️ ${imageError}`, W / 2, H / 2);
+      ctx.fillText(`Make sure svg-sprite.svg is in src/assets/`, W / 2, H / 2 + 40);
       return;
     }
 
-    // Only advance the virtual timer if an outcome is currently playing
-    if (outcome) {
-      virtualTimeRef.current += dt;
-    }
-    const vTime = virtualTimeRef.current;
+    if (!spriteLoaded) return; // Wait for image
 
+    // Default Scene Setup
     let bowlerSprite: keyof typeof SPRITES = 'bowler_idle';
     let ballX = BOWLING_X - 20;
     let ballY = PITCH_Y - 40;
@@ -142,6 +178,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     let drawBanner = '';
     const IMPACT = 600;
 
+    // Timeline Routing
     if (outcome) {
       if (vTime > 100 && vTime < 300) bowlerSprite = 'bowler_windup';
       else if (vTime >= 300 && vTime < IMPACT) {
@@ -149,13 +186,12 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
         showBall = true;
         const t = (vTime - 300) / (IMPACT - 300);
         ballX = BOWLING_X - 20 - t * (BOWLING_X - BATTING_X);
-        ballY = PITCH_Y - 40 - Math.sin(t * Math.PI) * 40;
+        ballY = PITCH_Y - 40 - Math.sin(t * Math.PI) * 40; // Arc throw
       }
       
       if (vTime >= IMPACT) {
         showBall = true;
         const t = (vTime - IMPACT) / 1000;
-        
         if (outcome === 'six') {
           ballX = BATTING_X + t * W * 1.5;
           ballY = PITCH_Y - 40 - t * 300;
@@ -174,18 +210,21 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       }
     }
 
+    // Draw Non-Striker Wickets
     for(let i=-10; i<=10; i+=10) drawSprite(ctx, 'stump', BOWLING_X + 25 + i, PITCH_Y, 2.5);
     drawSprite(ctx, 'bails', BOWLING_X + 25, PITCH_Y - 45, 1.2);
 
+    // Draw Bowler
     drawSprite(ctx, bowlerSprite, BOWLING_X, PITCH_Y + 10, 0.9, true);
     
-    // Idle bobbing / Hit shaking
+    // Draw Batter (Shakes on impact, bobs up and down gently when idle)
     const batterShake = (outcome && vTime > IMPACT && vTime < IMPACT + 200) ? Math.sin(vTime) * 3 : 0;
-    const idleBob = (!outcome) ? Math.sin(timestamp * 0.002) * 2 : 0;
+    const idleBob = (!outcome) ? Math.sin(timestamp * 0.003) * 3 : 0;
     drawSprite(ctx, 'batter_idle', BATTING_X + batterShake, PITCH_Y + 15 + idleBob, 0.7); 
 
+    // Draw Striker Wickets
     if (outcome === 'bowled' && vTime >= IMPACT) {
-      drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true);
+      drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true); // Leaning out of the ground
     } else {
       for(let i=-10; i<=10; i+=10) drawSprite(ctx, 'stump', BATTING_X - 25 + i, PITCH_Y, 2.5);
       drawSprite(ctx, 'bails', BATTING_X - 25, PITCH_Y - 45, 1.2);
@@ -197,29 +236,40 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       drawSprite(ctx, drawBanner as keyof typeof SPRITES, W / 2, H / 2 + 30, 2);
     }
 
-    // End animation and reset
     if (outcome && vTime > 2000) {
       completedRef.current = true;
       onAnimationComplete();
-      return; 
     }
+  }, [outcome, spriteLoaded, imageError, onAnimationComplete]);
 
-    animRef.current = requestAnimationFrame(animate);
-  }, [outcome, imageError, onAnimationComplete]);
-
-  // Restart trigger when outcome changes
+  // ============================================================
+  // 3. THE GAME LOOP
+  // ============================================================
   useEffect(() => {
-    if (outcome) {
-      completedRef.current = false;
-      virtualTimeRef.current = 0;
-      lastTimeRef.current = 0;
-      
-      if (reducedMotion) {
-        setTimeout(() => onAnimationComplete(), 1000);
-        return;
-      }
+    if (!spriteLoaded && !imageError) return;
+    
+    // Reset state whenever outcome changes
+    completedRef.current = false;
+    lastTimeRef.current = 0;
+    if (outcome) virtualTimeRef.current = 0;
+
+    // Check for reduced motion
+    if (reducedMotion && outcome) {
+      setTimeout(() => onAnimationComplete(), 1000);
+      return;
     }
-  }, [outcome, reducedMotion, onAnimationComplete]);
+
+    const loop = (timestamp: number) => {
+      renderFrame(timestamp);
+      if (!completedRef.current) {
+        animRef.current = requestAnimationFrame(loop);
+      }
+    };
+
+    animRef.current = requestAnimationFrame(loop);
+
+    return () => cancelAnimationFrame(animRef.current);
+  }, [outcome, spriteLoaded, imageError, reducedMotion, renderFrame]);
 
   return (
     <div className="w-full h-full rounded-xl overflow-hidden shadow-2xl border-4 border-[#558b2f]">
