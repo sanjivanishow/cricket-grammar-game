@@ -49,7 +49,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   outcome,
   onAnimationComplete,
   reducedMotion = false,
-  teamColors = ['#10b981', '#3b82f6'], // Elevated default neon colors
+  teamColors = ['#10b981', '#3b82f6'],
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -66,9 +66,11 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   const PITCH_Y = CANVAS_H * 0.65;
   const BATTING_X = CANVAS_W * 0.25;
   const BOWLING_X = CANVAS_W * 0.75;
-  const STUMP_HEIGHT = 60;
-  const STUMP_W = 6;
-  const STUMP_SPACING = 10;
+  
+  // Adjusted stump proportions for realism
+  const STUMP_HEIGHT = 65; 
+  const STUMP_W = 4.5; 
+  const STUMP_SPACING = 9;
 
   // Premium High-Contrast Palette
   const COLORS = {
@@ -92,14 +94,12 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   // ENVIRONMENT DRAWING
   // ============================================================
   const drawField = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) => {
-    // 1. Cinematic Night Sky
     const skyGrad = ctx.createLinearGradient(0, 0, 0, h * 0.5);
     skyGrad.addColorStop(0, COLORS.skyTop);
     skyGrad.addColorStop(1, COLORS.skyBottom);
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, w, h * 0.5);
 
-    // 2. Parallax Stars / Dust
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     for (let i = 0; i < 30; i++) {
       const sx = ((i * 127) + elapsed * 0.01) % w;
@@ -110,7 +110,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       ctx.fill();
     }
 
-    // 3. Volumetric Floodlights
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
     const drawLightBeam = (x1: number, x2: number, x3: number, x4: number) => {
@@ -126,7 +125,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     drawLightBeam(w * 0.95, w * 0.6, w * 1.2, w * 0.8);
     ctx.restore();
 
-    // 4. Detailed Stadium Stands
     const standsGrad = ctx.createLinearGradient(0, h * 0.3, 0, h * 0.5);
     standsGrad.addColorStop(0, '#020617');
     standsGrad.addColorStop(1, '#0f172a');
@@ -136,11 +134,9 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.fill();
     drawCrowd(ctx, w, h, elapsed);
 
-    // 5. High-Definition Turf (Checkerboard)
     for (let row = 0; row < 10; row++) {
       for (let col = 0; col < 20; col++) {
         ctx.fillStyle = (row + col) % 2 === 0 ? COLORS.grassDark : COLORS.grassLight;
-        // Perspective calculation for tiles
         const tileW = (w / 15) + (row * 3);
         const tileH = (h * 0.5) / 10;
         const tx = col * tileW - (w * 0.2) - (row * 15);
@@ -149,26 +145,22 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       }
     }
 
-    // Vignette over grass to focus on center
     const grassVignette = ctx.createRadialGradient(w/2, PITCH_Y, 0, w/2, PITCH_Y, w * 0.6);
     grassVignette.addColorStop(0, 'rgba(0,0,0,0)');
     grassVignette.addColorStop(1, 'rgba(0,0,0,0.5)');
     ctx.fillStyle = grassVignette;
     ctx.fillRect(0, h * 0.5, w, h * 0.5);
 
-    // 6. The Pitch (Textured with glowing creases)
     const pitchW = 90;
     const pitchH = 150;
     const pitchX = w / 2 - pitchW / 2;
     const pitchYTop = PITCH_Y - pitchH / 2;
     
-    // Deep Ground Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.beginPath();
     ctx.ellipse(w / 2, PITCH_Y, pitchW * 0.55, pitchH * 0.55, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Pitch Surface
     const pitchGrad = ctx.createLinearGradient(pitchX, pitchYTop, pitchX + pitchW, pitchYTop);
     pitchGrad.addColorStop(0, '#7c6533');
     pitchGrad.addColorStop(0.1, COLORS.pitchDark);
@@ -180,7 +172,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.roundRect(pitchX, pitchYTop, pitchW, pitchH, 8);
     ctx.fill();
 
-    // Luminous Crease marks
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
     ctx.lineWidth = 3;
     ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
@@ -188,11 +179,10 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.beginPath();
     ctx.moveTo(pitchX - 15, pitchYTop + 22); ctx.lineTo(pitchX + pitchW + 15, pitchYTop + 22);
     ctx.moveTo(pitchX - 15, pitchYTop + pitchH - 22); ctx.lineTo(pitchX + pitchW + 15, pitchYTop + pitchH - 22);
-    // Return creases
     ctx.moveTo(pitchX + 12, pitchYTop); ctx.lineTo(pitchX + 12, pitchYTop + 28);
     ctx.moveTo(pitchX + pitchW - 12, pitchYTop); ctx.lineTo(pitchX + pitchW - 12, pitchYTop + 28);
     ctx.stroke();
-    ctx.shadowBlur = 0; // Reset
+    ctx.shadowBlur = 0; 
   }, [PITCH_Y]);
 
   function drawCrowd(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) {
@@ -205,11 +195,9 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
         const wave = Math.sin(elapsed / 150 + x * 0.08) * (tier * 1.5 + 2);
         const y = tierY - Math.sin((i / 70) * Math.PI) * 15 + wave;
         
-        // Body glow
         ctx.fillStyle = crowdColors[(i + tier * 3) % crowdColors.length];
         ctx.globalAlpha = 0.8;
         ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
-        // Camera Flashes
         if (Math.random() > 0.995) {
           ctx.fillStyle = '#ffffff';
           ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
@@ -220,35 +208,49 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   }
 
   // ============================================================
-  // CHARACTER & EQUIPMENT DRAWING (3D Shaded)
+  // REFINED CHARACTER & EQUIPMENT DRAWING
   // ============================================================
   function drawStumps(ctx: CanvasRenderingContext2D, cx: number, y: number, intact: boolean = true) {
     const stumpsX = [cx - STUMP_SPACING, cx, cx + STUMP_SPACING];
     
+    // Stump shadow
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.beginPath(); ctx.ellipse(cx + 4, y + 3, STUMP_SPACING * 2, 5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 4, y + 2, STUMP_SPACING * 2, 4, 0, 0, Math.PI * 2); ctx.fill();
 
     stumpsX.forEach(sx => {
-      // 3D Cylinder gradient for stump
       const grad = ctx.createLinearGradient(sx - STUMP_W/2, 0, sx + STUMP_W/2, 0);
       grad.addColorStop(0, '#b45309');
-      grad.addColorStop(0.3, COLORS.stump);
-      grad.addColorStop(0.8, '#fef08a'); // Highlight
+      grad.addColorStop(0.4, COLORS.stump);
+      grad.addColorStop(0.8, '#fef08a');
       grad.addColorStop(1, '#92400e');
       ctx.fillStyle = grad;
+      
+      // Draw pointed stump
       ctx.beginPath();
-      ctx.roundRect(sx - STUMP_W / 2, y - STUMP_HEIGHT, STUMP_W, STUMP_HEIGHT, 3);
+      ctx.moveTo(sx - STUMP_W / 2, y);
+      ctx.lineTo(sx - STUMP_W / 2, y - STUMP_HEIGHT + 4);
+      ctx.lineTo(sx, y - STUMP_HEIGHT); // Point
+      ctx.lineTo(sx + STUMP_W / 2, y - STUMP_HEIGHT + 4);
+      ctx.lineTo(sx + STUMP_W / 2, y);
+      ctx.closePath();
       ctx.fill();
     });
 
     if (intact) {
+      // Improved Bails (Resting in the grooves)
       ctx.fillStyle = COLORS.bail;
-      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowColor = 'rgba(0,0,0,0.4)';
       ctx.shadowBlur = 2;
-      ctx.beginPath();
-      ctx.roundRect(cx - STUMP_SPACING - 3, y - STUMP_HEIGHT - 5, STUMP_SPACING + 4, 5, 2);
-      ctx.roundRect(cx - 1, y - STUMP_HEIGHT - 5, STUMP_SPACING + 4, 5, 2);
-      ctx.fill();
+      
+      const drawBail = (bx: number) => {
+        ctx.beginPath();
+        // Spigots (ends) and barrel (middle)
+        ctx.roundRect(bx - 1, y - STUMP_HEIGHT - 3, STUMP_SPACING + 2, 4, 2);
+        ctx.fill();
+      };
+      drawBail(cx - STUMP_SPACING);
+      drawBail(cx);
+      
       ctx.shadowBlur = 0;
     }
   }
@@ -259,84 +261,92 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     // Hard drop shadow
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.beginPath(); ctx.ellipse(5, 5, 24, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 4, 18, 6, 0, 0, Math.PI * 2); ctx.fill();
 
-    // Utility to draw shaded cylinders
     const drawShadedRect = (rx: number, ry: number, rw: number, rh: number, baseColor: string, radius: number) => {
       const grad = ctx.createLinearGradient(rx, 0, rx + rw, 0);
-      grad.addColorStop(0, '#0f172a');
-      grad.addColorStop(0.5, baseColor);
-      grad.addColorStop(0.9, '#ffffff'); // Rim light
-      grad.addColorStop(1, baseColor);
+      grad.addColorStop(0, '#0f172a'); grad.addColorStop(0.5, baseColor); grad.addColorStop(0.9, '#ffffff'); grad.addColorStop(1, baseColor);
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.roundRect(rx, ry, rw, rh, radius); ctx.fill();
     }
 
-    // Back Leg & Pad
-    ctx.fillStyle = '#64748b'; ctx.fillRect(-12, -26, 9, 26);
-    drawShadedRect(-14, -28, 12, 22, COLORS.pad, 4);
+    // Back Leg (Darker, recedes in perspective)
+    ctx.fillStyle = '#475569'; ctx.fillRect(-10, -28, 7, 28); // Thigh/Knee
+    drawShadedRect(-12, -30, 10, 24, '#cbd5e1', 3); // Back Pad
 
-    // Front Leg & Pad
-    ctx.fillStyle = '#64748b'; ctx.fillRect(4, -26, 9, 26);
-    drawShadedRect(2, -28, 13, 22, COLORS.pad, 4);
-
-    // Torso (Jersey with 3D gradient)
-    const jerseyGrad = ctx.createLinearGradient(-14, 0, 10, 0);
-    jerseyGrad.addColorStop(0, '#020617');
-    jerseyGrad.addColorStop(0.4, color);
-    jerseyGrad.addColorStop(0.85, color);
-    jerseyGrad.addColorStop(1, '#ffffff'); // Backlight rim
+    // Torso (Angled stance)
+    const jerseyGrad = ctx.createLinearGradient(-12, 0, 12, 0);
+    jerseyGrad.addColorStop(0, '#020617'); jerseyGrad.addColorStop(0.4, color); jerseyGrad.addColorStop(0.85, color); jerseyGrad.addColorStop(1, '#ffffff');
     ctx.fillStyle = jerseyGrad;
-    ctx.beginPath(); ctx.roundRect(-14, -52, 24, 30, 6); ctx.fill();
+    ctx.beginPath(); 
+    // Hips to shoulders taper
+    ctx.moveTo(-12, -26); ctx.lineTo(10, -26); ctx.lineTo(14, -54); ctx.lineTo(-14, -54);
+    ctx.closePath(); ctx.fill();
 
-    // Helmet
-    const helmetGrad = ctx.createLinearGradient(-13, -65, 5, -55);
-    helmetGrad.addColorStop(0, '#0f172a');
-    helmetGrad.addColorStop(0.5, color);
-    helmetGrad.addColorStop(1, '#94a3b8');
+    // Front Leg (Lighter, brings it forward)
+    ctx.fillStyle = '#64748b'; ctx.fillRect(4, -28, 8, 28);
+    drawShadedRect(2, -32, 12, 26, COLORS.pad, 4); // Front pad
+
+    // Improved Helmet
+    const helmetGrad = ctx.createLinearGradient(-13, -68, 5, -55);
+    helmetGrad.addColorStop(0, '#0f172a'); helmetGrad.addColorStop(0.5, color); helmetGrad.addColorStop(1, '#94a3b8');
     ctx.fillStyle = helmetGrad;
-    ctx.beginPath(); ctx.arc(0, -60, 11, Math.PI, 0); ctx.fill();
-    ctx.beginPath(); ctx.roundRect(-13, -60, 18, 12, 4); ctx.fill();
     
-    // Visor/Face
+    ctx.beginPath(); // Dome
+    ctx.arc(0, -60, 11, Math.PI, 0); 
+    ctx.fill();
+    
+    ctx.beginPath(); // Peak (Visor) and back shell
+    ctx.moveTo(-13, -60);
+    ctx.lineTo(14, -60); // Extended front peak
+    ctx.lineTo(10, -53);
+    ctx.lineTo(-13, -53);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Face & Grille
     ctx.fillStyle = '#fca5a5';
-    ctx.beginPath(); ctx.arc(-2, -54, 7, 0, Math.PI * 2); ctx.fill();
-    // Shiny Grille
-    ctx.strokeStyle = '#fef08a';
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(-2, -55, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(-2, -58); ctx.lineTo(8, -58); ctx.moveTo(-2, -54); ctx.lineTo(8, -54); ctx.stroke();
 
-    // Bat & Arms System
+    // Bat & Arms
     ctx.save();
-    ctx.translate(6, -42); // Shoulder pivot
+    ctx.translate(2, -45); // Accurate shoulder pivot
     ctx.rotate(swingAngle);
     
-    // Front Arm
-    drawShadedRect(-3, 0, 8, 18, '#fca5a5', 3);
-    // Gloves (Textured)
+    // Front Arm (tapered)
+    ctx.fillStyle = '#fca5a5';
+    ctx.beginPath(); ctx.moveTo(-3, 0); ctx.lineTo(3, 0); ctx.lineTo(2, 20); ctx.lineTo(-2, 20); ctx.fill();
+    
+    // Gloves
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(1, 20, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillRect(-4, 18, 10, 3);
+    ctx.beginPath(); ctx.arc(0, 20, 6, 0, Math.PI * 2); ctx.fill();
     
-    // Bat
+    // Improved Bat Silhouette
     ctx.save();
-    ctx.translate(0, 15);
-    ctx.fillStyle = COLORS.batHandle;
-    ctx.fillRect(-3, 0, 6, 18);
+    ctx.translate(0, 16); // Pivot at hands
     
-    // Metallic/Varnished Wood Bat
-    const batGrad = ctx.createLinearGradient(-7, 18, 7, 18);
-    batGrad.addColorStop(0, '#b45309');
-    batGrad.addColorStop(0.3, '#fde047');
-    batGrad.addColorStop(0.6, '#ca8a04');
-    batGrad.addColorStop(0.9, '#fef08a'); // Highlight reflection
-    batGrad.addColorStop(1, '#78350f');
+    // Handle
+    ctx.fillStyle = COLORS.batHandle;
+    ctx.fillRect(-2, 0, 4, 16);
+    
+    // Blade (Tapered top, widened middle, curved toe)
+    const batGrad = ctx.createLinearGradient(-6, 16, 6, 16);
+    batGrad.addColorStop(0, '#b45309'); batGrad.addColorStop(0.4, '#fde047'); batGrad.addColorStop(0.8, '#fef08a'); batGrad.addColorStop(1, '#78350f');
     ctx.fillStyle = batGrad;
-    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowColor = 'rgba(0,0,0,0.3)';
     ctx.shadowBlur = 4;
-    ctx.beginPath(); ctx.roundRect(-7, 18, 14, 46, 4); ctx.fill();
+    
+    ctx.beginPath();
+    ctx.moveTo(-4, 16); // Shoulder of bat
+    ctx.lineTo(4, 16);
+    ctx.lineTo(6, 48); // Sweet spot / widened base
+    ctx.arc(0, 48, 6, 0, Math.PI); // Rounded toe
+    ctx.lineTo(-6, 48);
+    ctx.closePath();
+    ctx.fill();
     ctx.shadowBlur = 0;
     
     ctx.restore();
@@ -351,9 +361,12 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     // Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.beginPath(); ctx.ellipse(5, 5, 20, 6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 4, 18, 5, 0, 0, Math.PI * 2); ctx.fill();
 
-    const legAngle = Math.sin(runUpProgress * Math.PI * 6) * 0.6;
+    // Athletic Stride Mechanics
+    // Increased amplitude for a running look rather than walking
+    const legAngle = Math.sin(runUpProgress * Math.PI * 8) * 0.8; 
+    
     const drawLimb = (lx: number, ly: number, lw: number, lh: number, baseColor: string) => {
       const grad = ctx.createLinearGradient(lx, 0, lx + lw, 0);
       grad.addColorStop(0, '#0f172a'); grad.addColorStop(0.5, baseColor); grad.addColorStop(1, '#ffffff');
@@ -361,46 +374,60 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 3); ctx.fill();
     };
     
-    // Back leg
-    ctx.save(); ctx.rotate(legAngle);
-    drawLimb(-4, -25, 8, 25, '#e2e8f0');
-    ctx.fillStyle = '#111'; ctx.roundRect(-6, -2, 13, 7, 2); ctx.fill();
+    // Back leg (Bent slightly at knee illusion)
+    ctx.save(); 
+    ctx.translate(0, -25); // Pivot from hip
+    ctx.rotate(legAngle);
+    drawLimb(-4, 0, 8, 25, '#cbd5e1'); // Trousers
+    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.roundRect(-6, 23, 13, 6, 2); ctx.fill(); // Shoe
     ctx.restore();
 
     // Front leg
-    ctx.save(); ctx.rotate(-legAngle);
-    drawLimb(-4, -25, 8, 25, '#94a3b8');
-    ctx.fillStyle = '#000'; ctx.roundRect(-6, -2, 13, 7, 2); ctx.fill();
+    ctx.save(); 
+    ctx.translate(0, -25);
+    ctx.rotate(-legAngle);
+    drawLimb(-4, 0, 8, 25, '#94a3b8');
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.roundRect(-6, 23, 13, 6, 2); ctx.fill();
     ctx.restore();
 
-    // Torso
+    // Torso (leaning slightly forward into the run)
+    ctx.save();
+    ctx.rotate(0.1); 
     const jerseyGrad = ctx.createLinearGradient(-10, 0, 10, 0);
     jerseyGrad.addColorStop(0, '#020617'); jerseyGrad.addColorStop(0.5, color); jerseyGrad.addColorStop(1, '#ffffff');
     ctx.fillStyle = jerseyGrad;
-    ctx.beginPath(); ctx.roundRect(-10, -48, 20, 28, 6); ctx.fill();
-
-    // Head
-    ctx.fillStyle = '#fca5a5';
-    ctx.beginPath(); ctx.arc(0, -56, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); 
+    ctx.moveTo(-9, -25); ctx.lineTo(9, -25); ctx.lineTo(11, -52); ctx.lineTo(-11, -52);
+    ctx.closePath(); ctx.fill();
     
-    // Cap
+    // Head & Cap
+    ctx.fillStyle = '#fca5a5';
+    ctx.beginPath(); ctx.arc(0, -58, 8, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(0, -59, 9, Math.PI, 0); ctx.fill(); 
-    ctx.fillRect(4, -61, 12, 3); 
-
-    // Bowling Arm
-    const armAngle = runUpProgress > 0.8 ? (runUpProgress - 0.8) * Math.PI * 3 : -0.5;
+    ctx.beginPath(); ctx.arc(0, -60, 8, Math.PI, 0); ctx.fill(); 
+    ctx.fillRect(3, -62, 10, 3); // Cap brim pointing forward
+    
+    // Bowling Arm (Dynamic rotation)
+    // Smooth delivery arc over the top
+    let armAngle = -0.5;
+    if (runUpProgress > 0.7) {
+      armAngle = -0.5 + ((runUpProgress - 0.7) / 0.3) * Math.PI * 2;
+    } else {
+       // Pumping arm during runup
+       armAngle = -legAngle * 1.5; 
+    }
+    
     ctx.save();
-    ctx.translate(5, -42);
+    ctx.translate(0, -48); // Shoulder
     ctx.rotate(armAngle);
-    drawLimb(-4, -20, 8, 24, '#fca5a5');
+    drawLimb(-3, 0, 6, 22, '#fca5a5');
     ctx.restore();
 
-    ctx.restore();
+    ctx.restore(); // Restore torso lean
+    ctx.restore(); // Restore bowler translation
   }
 
   function drawBall(ctx: CanvasRenderingContext2D, ball: Ball) {
-    // Cinematic Glowing Trail
     if (ball.trail.length > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
@@ -414,28 +441,25 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       ctx.restore();
     }
 
-    // Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.beginPath(); ctx.ellipse(ball.x + 4, ball.y + 5, ball.radius * 1.2, ball.radius * 0.6, 0, 0, Math.PI * 2); ctx.fill();
 
-    // High-fidelity 3D Sphere
     ctx.save();
     ctx.translate(ball.x, ball.y);
     ctx.rotate(ball.rotation);
     
     const grad = ctx.createRadialGradient(-2, -2, 1, 0, 0, ball.radius);
-    grad.addColorStop(0, '#ffffff'); // Specular highlight
+    grad.addColorStop(0, '#ffffff'); 
     grad.addColorStop(0.2, '#ff4d6d');
     grad.addColorStop(0.6, COLORS.ball);
-    grad.addColorStop(1, '#590d22'); // Ambient occlusion
+    grad.addColorStop(1, '#590d22'); 
     
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(0, 0, ball.radius, 0, Math.PI * 2); ctx.fill();
 
-    // Dynamic Seam
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
-    ctx.setLineDash([2, 2]); // Realistic stitching
+    ctx.setLineDash([2, 2]); 
     ctx.beginPath();
     ctx.ellipse(0, 0, ball.radius * 0.3, ball.radius * 0.9, 0, 0, Math.PI * 2);
     ctx.stroke();
@@ -482,14 +506,12 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   }
 
   function spawnImpactFlare(x: number, y: number) {
-    // Bright Core Flare
     particlesRef.current.push({
       x, y, vx: 0, vy: 0,
       color: '#ffffff',
       life: 20, maxLife: 20,
       size: 50, gravity: 0, type: 'flare'
     });
-    // Expanding Shockwave Ring
     particlesRef.current.push({
       x, y, vx: 0, vy: 0,
       color: '#fbbf24',
@@ -504,7 +526,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       p.x += p.vx;
       p.y += p.vy;
       p.vy += p.gravity;
-      p.vx *= 0.95; // friction
+      p.vx *= 0.95; 
 
       const alpha = Math.max(0, p.life / p.maxLife);
       ctx.save();
@@ -514,7 +536,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
         ctx.globalAlpha = alpha;
         ctx.fillStyle = p.color;
         ctx.shadowColor = p.color;
-        ctx.shadowBlur = 15; // Heavy bloom
+        ctx.shadowBlur = 15; 
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2); ctx.fill();
       } else if (p.type === 'dust') {
         ctx.globalAlpha = alpha * 0.5;
@@ -552,14 +574,13 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     bailsRef.current = bailsRef.current.filter(b => {
       b.x += b.vx;
       b.y += b.vy;
-      b.vy += 0.5; // Heavy gravity
+      b.vy += 0.5; 
       b.angle += b.spin;
       
       ctx.save();
       ctx.translate(b.x, b.y);
       ctx.rotate(b.angle);
       
-      // 3D Bail Shading
       const bailGrad = ctx.createLinearGradient(-8, -2, 8, 2);
       bailGrad.addColorStop(0, '#78350f'); bailGrad.addColorStop(0.5, COLORS.bail); bailGrad.addColorStop(1, '#fde047');
       ctx.fillStyle = bailGrad;
@@ -572,7 +593,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     });
   }
 
-  // Next-Gen Glassmorphism Banner
   function drawBanner(ctx: CanvasRenderingContext2D, text: string, subtext: string, w: number, h: number, color: string, alpha: number) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, alpha);
@@ -581,7 +601,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     const bx = w / 2 - bw / 2;
     const by = h * 0.15;
     
-    // Deep frosted glass backdrop
     ctx.fillStyle = 'rgba(10, 15, 30, 0.85)';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = 30;
@@ -589,31 +608,26 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.fill();
     ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
 
-    // Outer Neon Glow
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.shadowColor = color;
     ctx.shadowBlur = 15;
     ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.stroke();
     
-    // Glossy Overlay
     const innerGrad = ctx.createLinearGradient(bx, by, bx, by + bh * 0.4);
     innerGrad.addColorStop(0, 'rgba(255,255,255,0.15)');
     innerGrad.addColorStop(1, 'transparent');
     ctx.fillStyle = innerGrad;
     ctx.fill();
 
-    // Main 3D Text
     ctx.font = `900 52px 'Montserrat', 'Arial Black', sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     
-    // Text Stroke/Glow
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#000';
     ctx.strokeText(text, w / 2, by + bh * 0.42);
     
-    // Text Fill
     const textGrad = ctx.createLinearGradient(0, by, 0, by + bh);
     textGrad.addColorStop(0, '#ffffff');
     textGrad.addColorStop(0.5, color);
@@ -622,7 +636,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.shadowBlur = 20;
     ctx.fillText(text, w / 2, by + bh * 0.42);
 
-    // Crisp Subtext
     ctx.fillStyle = '#e2e8f0';
     ctx.font = `700 22px 'Inter', 'Segoe UI', sans-serif`;
     ctx.shadowBlur = 0;
@@ -649,12 +662,11 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     const h = canvas.height;
     const elapsed = timestamp - startTimeRef.current;
 
-    // Kinetic Screen Shake
     let shakeX = 0, shakeY = 0;
     if (shakeDecay > 0.1) {
       shakeX = (Math.random() - 0.5) * shakeDecay;
       shakeY = (Math.random() - 0.5) * shakeDecay;
-      shakeDecay *= 0.88; // smoother falloff
+      shakeDecay *= 0.88; 
     }
 
     ctx.save();
@@ -663,11 +675,10 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     drawField(ctx, w, h, elapsed);
 
-    // Physics Update
     if (ballRef.current) {
       const ball = ballRef.current;
       ball.trail.push({ x: ball.x, y: ball.y, alpha: 1, size: ball.radius * 1.5 });
-      if (ball.trail.length > 15) ball.trail.shift(); // Longer trail
+      if (ball.trail.length > 15) ball.trail.shift(); 
       ball.trail.forEach((t, i) => {
         t.alpha = i / ball.trail.length;
         t.size = (i / ball.trail.length) * ball.radius * 1.5;
@@ -675,7 +686,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
       ball.x += ball.vx;
       ball.y += ball.vy;
-      ball.vy += 0.25; // Snappier gravity
+      ball.vy += 0.25; 
       ball.rotation += ball.vx * 0.08;
 
       if (ball.y > PITCH_Y - ball.radius && !ball.bounced && ball.vy > 0) {
@@ -686,7 +697,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       }
     }
 
-    // Sequence Routers
     switch (outcome) {
       case 'six': renderSix(ctx, w, h, elapsed); break;
       case 'four': renderFour(ctx, w, h, elapsed); break;
@@ -744,7 +754,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     if (elapsed > 280 && !hasHitRef.current) {
       spawnImpactFlare(BATTING_X + 20, PITCH_Y - 25);
-      startShake(12); // Heavier impact
+      startShake(12); 
       hasHitRef.current = true;
     }
 
@@ -865,7 +875,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       if (!hasHitRef.current) {
         spawnBails(BATTING_X, PITCH_Y);
         spawnDust(BATTING_X, PITCH_Y);
-        spawnImpactFlare(BATTING_X, PITCH_Y - 20); // Stump explosion
+        spawnImpactFlare(BATTING_X, PITCH_Y - 20); 
         startShake(14);
         hasHitRef.current = true;
       }
@@ -933,7 +943,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     return () => cancelAnimationFrame(animRef.current);
   }, [outcome, reducedMotion, onAnimationComplete, animate]);
 
-  // Initial draw before animation triggers
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
