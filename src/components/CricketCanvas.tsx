@@ -5,6 +5,9 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { CricketOutcome } from '../engine/GameState';
 
+// 1. IMPORT THE SVG DIRECTLY (Vite will bundle this automatically!)
+import spriteUrl from '../../svg-sprite.svg';
+
 interface CricketCanvasProps {
   outcome: CricketOutcome | null;
   onAnimationComplete: () => void;
@@ -31,32 +34,34 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   const BOWLING_X = W * 0.75;
 
   // ============================================================
-  // AUTHENTIC SPRITE MAP (Extracted directly from cricket17.js)
-  // Format: { x, y, w, h } mapped from the original arrays
+  // AUTHENTIC SPRITE MAP
   // ============================================================
   const SPRITES = {
-    // Grasshopper (Wc)
     batter_idle: { x: 20, y: 146, w: 116, h: 193 },
-    // Snail Bowler (cd, ed, fd)
     bowler_idle: { x: 20, y: 1262, w: 49, h: 81 },
     bowler_windup: { x: 20, y: 1550, w: 130, h: 212 },
     bowler_throw: { x: 20, y: 1783, w: 130, h: 225 },
-    // Stumps (Dd) & Bails (ge)
     stump: { x: 20, y: 5705, w: 3, h: 21 },
     bails: { x: 20, y: 9914, w: 38, h: 31 },
-    // Score Numbers (jd and Lf array from original source)
     num_4: { x: 20, y: 2781, w: 65, h: 72 },
     num_6: { x: 20, y: 2970, w: 53, h: 80 },
   };
 
-  // Load the authentic SVG Sprite
+  // Load the authentic SVG Sprite using the imported Vite URL
   useEffect(() => {
     const img = new Image();
-    img.src = '/svg-sprite.svg'; // Must be in your public folder!
+    
+    // 2. USE THE IMPORTED URL HERE
+    img.src = spriteUrl; 
+    
     img.onload = () => {
       spriteRef.current = img;
-      // Force an initial draw once the image loads
       if (!outcome) animate(performance.now()); 
+    };
+    
+    // Fallback if image fails to load
+    img.onerror = () => {
+      console.error("Failed to load svg-sprite.svg!");
     };
   }, []);
 
@@ -75,7 +80,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.translate(dx, dy);
     if (flip) ctx.scale(-1, 1);
     
-    // Original JS adds a 5px offset to handle bleeding/padding
     ctx.drawImage(
       spriteRef.current, 
       s.x - 5, s.y - 5, s.w + 10, s.h + 10,
@@ -85,32 +89,27 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   };
 
   const drawEnvironment = (ctx: CanvasRenderingContext2D) => {
-    // Exact colors from the original Doodle
-    ctx.fillStyle = '#8bc34a'; // Grass background
+    ctx.fillStyle = '#8bc34a';
     ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = '#c5a365'; // Dirt Pitch
+    ctx.fillStyle = '#c5a365';
     ctx.beginPath();
     ctx.ellipse(W / 2, PITCH_Y, 280, 50, 0, 0, Math.PI * 2);
     ctx.fill();
     
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; // Creases
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(BATTING_X, PITCH_Y - 40); ctx.lineTo(BATTING_X, PITCH_Y + 40); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(BOWLING_X, PITCH_Y - 40); ctx.lineTo(BOWLING_X, PITCH_Y + 40); ctx.stroke();
   };
 
   const drawOriginalBall = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
-    // The original JS draws the ball programmatically using Canvas arcs (M.call(this, ... "#b22"))
     ctx.fillStyle = '#bb2222';
     ctx.beginPath();
     ctx.arc(x, y - 5, 8, 0, Math.PI * 2);
     ctx.fill();
   };
 
-  // ============================================================
-  // ANIMATION LOOP
-  // ============================================================
   const animate = useCallback((timestamp: number) => {
     const canvas = canvasRef.current;
     if (!canvas || !spriteRef.current) return;
@@ -125,7 +124,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     drawEnvironment(ctx);
 
-    // State Configuration
     let bowlerSprite: keyof typeof SPRITES = 'bowler_idle';
     let ballX = BOWLING_X - 20;
     let ballY = PITCH_Y - 40;
@@ -134,7 +132,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     const IMPACT = 600;
 
     if (outcome) {
-      // 1. Bowler Windup & Throw
       if (vTime > 100 && vTime < 300) bowlerSprite = 'bowler_windup';
       else if (vTime >= 300 && vTime < IMPACT) {
         bowlerSprite = 'bowler_throw';
@@ -144,7 +141,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
         ballY = PITCH_Y - 40 - Math.sin(t * Math.PI) * 40;
       }
       
-      // 2. Post-Impact Logic
       if (vTime >= IMPACT) {
         showBall = true;
         const t = (vTime - IMPACT) / 1000;
@@ -167,20 +163,16 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       }
     }
 
-    // Render Stumps (Non-Striker)
     for(let i=-10; i<=10; i+=10) drawSprite(ctx, 'stump', BOWLING_X + 25 + i, PITCH_Y, 2.5);
     drawSprite(ctx, 'bails', BOWLING_X + 25, PITCH_Y - 45, 1.2);
 
-    // Render Characters
-    drawSprite(ctx, bowlerSprite, BOWLING_X, PITCH_Y + 10, 0.9, true); // Bowler
+    drawSprite(ctx, bowlerSprite, BOWLING_X, PITCH_Y + 10, 0.9, true);
     
-    // Batter shake logic
     const batterShake = (outcome && vTime > IMPACT && vTime < IMPACT + 200) ? Math.sin(vTime) * 3 : 0;
     drawSprite(ctx, 'batter_idle', BATTING_X + batterShake, PITCH_Y + 15, 0.7); 
 
-    // Render Stumps (Striker)
     if (outcome === 'bowled' && vTime >= IMPACT) {
-      drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true); // Leaning over
+      drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true);
     } else {
       for(let i=-10; i<=10; i+=10) drawSprite(ctx, 'stump', BATTING_X - 25 + i, PITCH_Y, 2.5);
       drawSprite(ctx, 'bails', BATTING_X - 25, PITCH_Y - 45, 1.2);
@@ -188,7 +180,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     if (showBall) drawOriginalBall(ctx, ballX, ballY);
 
-    // Draw Google's original authentic score graphic for boundaries!
     if (drawBanner && vTime > IMPACT + 300) {
       drawSprite(ctx, drawBanner as keyof typeof SPRITES, W / 2, H / 2 + 30, 2);
     }
