@@ -1,12 +1,12 @@
 // ============================================================
-// Grammar Cricket - Authentic Google Doodle Graphics
-// Includes the Auto-Patching SVG Loader for Canvas Dimensions
+// Grammar Cricket - The Authentic 2017 Google Doodle Experience
+// Complete with Crowd Bugs, Trees, and Reliable SVG Decoding
 // ============================================================
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { CricketOutcome } from '../engine/GameState';
 
-// @ts-ignore - Tells TypeScript to allow the SVG import
-import spriteUrl from '../assets/svg-sprite.svg';
+// @ts-ignore - Tells TypeScript to allow the SVG import from the root directory
+import spriteUrl from '../../svg-sprite.svg';
 
 interface CricketCanvasProps {
   outcome: CricketOutcome | null;
@@ -21,12 +21,9 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spriteRef = useRef<HTMLImageElement | null>(null);
-  
-  // State
   const [spriteLoaded, setSpriteLoaded] = useState(false);
   const [imageError, setImageError] = useState("");
   
-  // Timers
   const animRef = useRef<number>(0);
   const virtualTimeRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
@@ -34,10 +31,11 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
   const W = 800;
   const H = 480;
-  const PITCH_Y = H * 0.65;
+  const PITCH_Y = H * 0.70;
   const BATTING_X = W * 0.25;
   const BOWLING_X = W * 0.75;
 
+  // Authentic coordinate map extracted from cricket17.js
   const SPRITES = {
     batter_idle: { x: 20, y: 146, w: 116, h: 193 },
     bowler_idle: { x: 20, y: 1262, w: 49, h: 81 },
@@ -45,12 +43,23 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     bowler_throw: { x: 20, y: 1783, w: 130, h: 225 },
     stump: { x: 20, y: 5705, w: 3, h: 21 },
     bails: { x: 20, y: 9914, w: 38, h: 31 },
-    num_4: { x: 20, y: 2781, w: 65, h: 72 },
-    num_6: { x: 20, y: 2970, w: 53, h: 80 },
+    crowd_1: { x: 20, y: 7058, w: 124, h: 184 },
+    crowd_2: { x: 20, y: 7262, w: 124, h: 184 },
+    tree: { x: 20, y: 810, w: 66, h: 432 },
   };
 
+  // Crowd generation
+  const CROWD_MEMBERS = useRef(
+    Array.from({ length: 12 }).map((_, i) => ({
+      x: 50 + i * 65,
+      y: H * 0.35,
+      offset: Math.random() * 1000,
+      scale: 0.25 + Math.random() * 0.1,
+    }))
+  );
+
   // ============================================================
-  // 1. THE BULLETPROOF SVG LOADER
+  // 1. THE BULLETPROOF SVG DECODER & LOADER
   // ============================================================
   useEffect(() => {
     let active = true;
@@ -59,22 +68,23 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       try {
         let svgText = "";
         
-        // Handle Vite inlined data URIs vs normal paths
-        if (spriteUrl.startsWith('data:image/svg+xml')) {
-          const [header, data] = spriteUrl.split(',');
-          svgText = header.includes('base64') ? atob(data) : decodeURIComponent(data);
+        // Handle Vite's Base64/URI inlining for vite-plugin-singlefile
+        if (spriteUrl.startsWith('data:')) {
+          const parts = spriteUrl.split(',');
+          const dataContent = parts.slice(1).join(',');
+          svgText = parts[0].includes('base64') ? atob(dataContent) : decodeURIComponent(dataContent);
         } else {
+          // Fallback if not inlined
           const res = await fetch(spriteUrl);
-          if (!res.ok) throw new Error("Failed to fetch SVG");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           svgText = await res.text();
         }
 
-        // MAGIC FIX: Inject massive width and height so Canvas crop works!
+        // MAGIC FIX: Inject explicit dimensions so Canvas crop doesn't return blank!
         if (!svgText.includes('width=')) {
           svgText = svgText.replace('<svg', '<svg width="10000" height="10000"');
         }
 
-        // Convert back to a Blob URL
         const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         
@@ -83,14 +93,14 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
           if (active) {
             spriteRef.current = img;
             setSpriteLoaded(true);
+            URL.revokeObjectURL(url);
           }
         };
         img.onerror = () => { if (active) setImageError("Failed to decode patched SVG."); };
         img.src = url;
-
       } catch (err) {
         console.error(err);
-        if (active) setImageError("Error loading SVG file.");
+        if (active) setImageError("Could not locate or parse svg-sprite.svg in root directory.");
       }
     };
 
@@ -99,21 +109,21 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   }, []);
 
   // ============================================================
-  // 2. THE RENDER ENGINE
+  // 2. THE RENDERING ENGINE
   // ============================================================
   const drawSprite = (
     ctx: CanvasRenderingContext2D, 
     spriteName: keyof typeof SPRITES, 
     dx: number, dy: number, 
-    scale: number = 1, flip: boolean = false
+    scale: number = 1, flip: boolean = false, rotate: number = 0
   ) => {
     if (!spriteRef.current) return;
     const s = SPRITES[spriteName];
     ctx.save();
     ctx.translate(dx, dy);
     if (flip) ctx.scale(-1, 1);
+    if (rotate) ctx.rotate(rotate);
     
-    // The -5 and +10 handles the exact padding Google used in their sheet
     ctx.drawImage(
       spriteRef.current, 
       s.x - 5, s.y - 5, s.w + 10, s.h + 10,
@@ -122,24 +132,41 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     ctx.restore();
   };
 
-  const drawEnvironment = (ctx: CanvasRenderingContext2D) => {
-    ctx.fillStyle = '#8bc34a';
+  const drawAuthenticEnvironment = (ctx: CanvasRenderingContext2D, vTime: number) => {
+    // 1. Deep Background
+    ctx.fillStyle = '#689f38'; 
     ctx.fillRect(0, 0, W, H);
 
+    // 2. Background Trees
+    drawSprite(ctx, 'tree', W * 0.1, H * 0.35, 0.5);
+    drawSprite(ctx, 'tree', W * 0.85, H * 0.4, 0.6);
+
+    // 3. The Curved Stadium Grass
+    ctx.fillStyle = '#8bc34a';
+    ctx.beginPath();
+    ctx.ellipse(W / 2, H * 0.8, W * 0.9, H * 0.5, 0, Math.PI, 0);
+    ctx.fill();
+
+    // 4. The Jumping Bug Crowd!
+    CROWD_MEMBERS.current.forEach((bug, index) => {
+      // Crowd goes crazy during an outcome!
+      const intensity = outcome ? 4 : 1; 
+      const jumpY = Math.abs(Math.sin((vTime + bug.offset) * 0.005 * intensity)) * 25 * intensity;
+      const sprite = (Math.floor(vTime / 200) + index) % 2 === 0 ? 'crowd_1' : 'crowd_2';
+      drawSprite(ctx, sprite, bug.x, bug.y - jumpY, bug.scale);
+    });
+
+    // 5. The Dirt Pitch
     ctx.fillStyle = '#c5a365';
     ctx.beginPath();
     ctx.ellipse(W / 2, PITCH_Y, 280, 50, 0, 0, Math.PI * 2);
     ctx.fill();
     
+    // 6. Creases
     ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(BATTING_X, PITCH_Y - 40); ctx.lineTo(BATTING_X, PITCH_Y + 40); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(BOWLING_X, PITCH_Y - 40); ctx.lineTo(BOWLING_X, PITCH_Y + 40); ctx.stroke();
-  };
-
-  const drawOriginalBall = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
-    ctx.fillStyle = '#bb2222';
-    ctx.beginPath(); ctx.arc(x, y - 5, 8, 0, Math.PI * 2); ctx.fill();
   };
 
   const renderFrame = useCallback((timestamp: number) => {
@@ -152,31 +179,33 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     const dt = Math.min(timestamp - lastTimeRef.current, 50);
     lastTimeRef.current = timestamp;
 
-    // Only advance virtual time if an action is playing
     if (outcome) virtualTimeRef.current += dt;
     const vTime = virtualTimeRef.current;
+    const sysTime = timestamp; // Used for idle animations
 
-    drawEnvironment(ctx);
+    // Render Environment & Crowd
+    drawAuthenticEnvironment(ctx, sysTime);
 
-    // Show explicit error if fetching failed
+    // Error Overlay Fallback
     if (imageError) {
-      ctx.fillStyle = 'white';
-      ctx.font = 'bold 24px Arial';
-      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'white'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center';
       ctx.fillText(`⚠️ ${imageError}`, W / 2, H / 2);
-      ctx.fillText(`Make sure svg-sprite.svg is in src/assets/`, W / 2, H / 2 + 40);
       return;
     }
 
-    if (!spriteLoaded) return; // Wait for image
+    if (!spriteLoaded) return;
 
     // Default Scene Setup
     let bowlerSprite: keyof typeof SPRITES = 'bowler_idle';
     let ballX = BOWLING_X - 20;
     let ballY = PITCH_Y - 40;
     let showBall = false;
-    let drawBanner = '';
+    let drawBannerText = '';
     const IMPACT = 600;
+
+    // Camera Shake Logic
+    let shakeX = 0; let shakeY = 0;
 
     // Timeline Routing
     if (outcome) {
@@ -192,51 +221,80 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       if (vTime >= IMPACT) {
         showBall = true;
         const t = (vTime - IMPACT) / 1000;
+        
+        if (vTime < IMPACT + 200) {
+          shakeX = (Math.random() - 0.5) * 10;
+          shakeY = (Math.random() - 0.5) * 10;
+        }
+
         if (outcome === 'six') {
           ballX = BATTING_X + t * W * 1.5;
-          ballY = PITCH_Y - 40 - t * 300;
-          drawBanner = 'num_6';
+          ballY = PITCH_Y - 40 - t * 400;
+          drawBannerText = 'SIX!';
         } else if (outcome === 'four') {
           ballX = BATTING_X + t * W;
           ballY = PITCH_Y - 10 - Math.abs(Math.sin(vTime * 0.02) * 15);
-          drawBanner = 'num_4';
+          drawBannerText = 'FOUR!';
         } else if (outcome === 'bowled') {
           ballX = BATTING_X - 50;
           ballY = PITCH_Y - 5;
+          drawBannerText = 'OUT!';
         } else {
           ballX = BATTING_X + t * W * 0.4;
           ballY = PITCH_Y - 5;
+          drawBannerText = outcome === 'dot' ? 'DOT BALL' : `${outcome.toUpperCase()} RUN`;
         }
       }
     }
 
-    // Draw Non-Striker Wickets
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    // Draw Wickets
     for(let i=-10; i<=10; i+=10) drawSprite(ctx, 'stump', BOWLING_X + 25 + i, PITCH_Y, 2.5);
     drawSprite(ctx, 'bails', BOWLING_X + 25, PITCH_Y - 45, 1.2);
 
-    // Draw Bowler
+    // Draw Snail
     drawSprite(ctx, bowlerSprite, BOWLING_X, PITCH_Y + 10, 0.9, true);
     
-    // Draw Batter (Shakes on impact, bobs up and down gently when idle)
-    const batterShake = (outcome && vTime > IMPACT && vTime < IMPACT + 200) ? Math.sin(vTime) * 3 : 0;
-    const idleBob = (!outcome) ? Math.sin(timestamp * 0.003) * 3 : 0;
-    drawSprite(ctx, 'batter_idle', BATTING_X + batterShake, PITCH_Y + 15 + idleBob, 0.7); 
+    // Draw Grasshopper (Bobs when idle, leans back when swinging)
+    const idleBob = (!outcome) ? Math.sin(sysTime * 0.003) * 3 : 0;
+    const swingRotation = (outcome && vTime > IMPACT - 100 && vTime < IMPACT + 300) ? -0.3 : 0;
+    drawSprite(ctx, 'batter_idle', BATTING_X, PITCH_Y + 15 + idleBob, 0.7, false, swingRotation); 
 
-    // Draw Striker Wickets
     if (outcome === 'bowled' && vTime >= IMPACT) {
-      drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true); // Leaning out of the ground
+      drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true, -0.4); // Stumps fly backward
     } else {
       for(let i=-10; i<=10; i+=10) drawSprite(ctx, 'stump', BATTING_X - 25 + i, PITCH_Y, 2.5);
       drawSprite(ctx, 'bails', BATTING_X - 25, PITCH_Y - 45, 1.2);
     }
 
-    if (showBall) drawOriginalBall(ctx, ballX, ballY);
-
-    if (drawBanner && vTime > IMPACT + 300) {
-      drawSprite(ctx, drawBanner as keyof typeof SPRITES, W / 2, H / 2 + 30, 2);
+    // Draw Original Red Berry Ball
+    if (showBall) {
+      ctx.fillStyle = '#bb2222';
+      ctx.beginPath(); ctx.arc(ballX, ballY - 5, 8, 0, Math.PI * 2); ctx.fill();
     }
 
-    if (outcome && vTime > 2000) {
+    ctx.restore(); // Restore shake
+
+    // Draw Authentic Wood Sign Banner
+    if (drawBannerText && vTime > IMPACT + 300) {
+      const by = H / 2 - 50;
+      ctx.fillStyle = '#795548'; // Wood color
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.roundRect(W/2 - 150, by, 300, 80, 10); ctx.fill();
+      ctx.shadowBlur = 0;
+      
+      ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(W/2 - 145, by + 5, 290, 70, 8); ctx.stroke();
+
+      ctx.fillStyle = '#ffeb3b'; // Doodle yellow
+      ctx.font = '900 36px "Chalkboard SE", "Comic Sans MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(drawBannerText, W / 2, by + 40);
+    }
+
+    if (outcome && vTime > 2500) {
       completedRef.current = true;
       onAnimationComplete();
     }
@@ -248,12 +306,11 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   useEffect(() => {
     if (!spriteLoaded && !imageError) return;
     
-    // Reset state whenever outcome changes
+    // Reset virtual timer whenever outcome changes
     completedRef.current = false;
     lastTimeRef.current = 0;
     if (outcome) virtualTimeRef.current = 0;
 
-    // Check for reduced motion
     if (reducedMotion && outcome) {
       setTimeout(() => onAnimationComplete(), 1000);
       return;
@@ -267,7 +324,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     };
 
     animRef.current = requestAnimationFrame(loop);
-
     return () => cancelAnimationFrame(animRef.current);
   }, [outcome, spriteLoaded, imageError, reducedMotion, renderFrame]);
 
@@ -277,7 +333,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
         ref={canvasRef} 
         width={W} 
         height={H} 
-        className="w-full h-full object-contain bg-[#8bc34a]"
+        className="w-full h-full object-contain bg-[#689f38]"
       />
     </div>
   );
