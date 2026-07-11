@@ -1,12 +1,11 @@
 // ============================================================
 // Grammar Cricket - Authentic Google Doodle Graphics
-// Powered by the original svg-sprite.svg and cricket17.js coordinates
 // ============================================================
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { CricketOutcome } from '../engine/GameState';
 
-// 1. IMPORT THE SVG DIRECTLY (Vite will bundle this automatically!)
-import spriteUrl from '../../svg-sprite.svg';
+// @ts-ignore - This tells TypeScript to stop complaining about importing an SVG!
+import spriteUrl from '../assets/svg-sprite.svg';
 
 interface CricketCanvasProps {
   outcome: CricketOutcome | null;
@@ -21,6 +20,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spriteRef = useRef<HTMLImageElement | null>(null);
+  const [imageError, setImageError] = useState(false);
   
   const animRef = useRef<number>(0);
   const virtualTimeRef = useRef<number>(0);
@@ -33,9 +33,6 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   const BATTING_X = W * 0.25;
   const BOWLING_X = W * 0.75;
 
-  // ============================================================
-  // AUTHENTIC SPRITE MAP
-  // ============================================================
   const SPRITES = {
     batter_idle: { x: 20, y: 146, w: 116, h: 193 },
     bowler_idle: { x: 20, y: 1262, w: 49, h: 81 },
@@ -47,22 +44,23 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     num_6: { x: 20, y: 2970, w: 53, h: 80 },
   };
 
-  // Load the authentic SVG Sprite using the imported Vite URL
   useEffect(() => {
     const img = new Image();
-    
-    // 2. USE THE IMPORTED URL HERE
     img.src = spriteUrl; 
     
     img.onload = () => {
       spriteRef.current = img;
-      if (!outcome) animate(performance.now()); 
+      setImageError(false);
+      // Kick off the idle animation loop as soon as the image is ready
+      animRef.current = requestAnimationFrame(animate); 
     };
-    
-    // Fallback if image fails to load
+
     img.onerror = () => {
       console.error("Failed to load svg-sprite.svg!");
+      setImageError(true);
     };
+
+    return () => cancelAnimationFrame(animRef.current);
   }, []);
 
   const drawSprite = (
@@ -119,10 +117,23 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     if (lastTimeRef.current === 0) lastTimeRef.current = timestamp;
     const dt = Math.min(timestamp - lastTimeRef.current, 50);
     lastTimeRef.current = timestamp;
-    virtualTimeRef.current += dt;
-    const vTime = virtualTimeRef.current;
 
     drawEnvironment(ctx);
+
+    // Error rendering fallback
+    if (imageError) {
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText("⚠️ ERROR: Cannot find src/assets/svg-sprite.svg", W / 2, H / 2);
+      return;
+    }
+
+    // Only advance the virtual timer if an outcome is currently playing
+    if (outcome) {
+      virtualTimeRef.current += dt;
+    }
+    const vTime = virtualTimeRef.current;
 
     let bowlerSprite: keyof typeof SPRITES = 'bowler_idle';
     let ballX = BOWLING_X - 20;
@@ -168,8 +179,10 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
 
     drawSprite(ctx, bowlerSprite, BOWLING_X, PITCH_Y + 10, 0.9, true);
     
+    // Idle bobbing / Hit shaking
     const batterShake = (outcome && vTime > IMPACT && vTime < IMPACT + 200) ? Math.sin(vTime) * 3 : 0;
-    drawSprite(ctx, 'batter_idle', BATTING_X + batterShake, PITCH_Y + 15, 0.7); 
+    const idleBob = (!outcome) ? Math.sin(timestamp * 0.002) * 2 : 0;
+    drawSprite(ctx, 'batter_idle', BATTING_X + batterShake, PITCH_Y + 15 + idleBob, 0.7); 
 
     if (outcome === 'bowled' && vTime >= IMPACT) {
       drawSprite(ctx, 'stump', BATTING_X - 20, PITCH_Y, 2.5, true);
@@ -184,29 +197,29 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
       drawSprite(ctx, drawBanner as keyof typeof SPRITES, W / 2, H / 2 + 30, 2);
     }
 
-    if (vTime > 2000) completedRef.current = true;
-    if (completedRef.current) {
+    // End animation and reset
+    if (outcome && vTime > 2000) {
+      completedRef.current = true;
       onAnimationComplete();
-      return;
+      return; 
     }
-    animRef.current = requestAnimationFrame(animate);
-  }, [outcome, onAnimationComplete]);
 
+    animRef.current = requestAnimationFrame(animate);
+  }, [outcome, imageError, onAnimationComplete]);
+
+  // Restart trigger when outcome changes
   useEffect(() => {
-    completedRef.current = false;
-    virtualTimeRef.current = 0;
-    lastTimeRef.current = 0;
-    
-    if (reducedMotion && outcome) {
-      setTimeout(() => onAnimationComplete(), 1000);
-      return;
-    }
-    
     if (outcome) {
-      animRef.current = requestAnimationFrame(animate);
+      completedRef.current = false;
+      virtualTimeRef.current = 0;
+      lastTimeRef.current = 0;
+      
+      if (reducedMotion) {
+        setTimeout(() => onAnimationComplete(), 1000);
+        return;
+      }
     }
-    return () => cancelAnimationFrame(animRef.current);
-  }, [outcome, reducedMotion, onAnimationComplete, animate]);
+  }, [outcome, reducedMotion, onAnimationComplete]);
 
   return (
     <div className="w-full h-full rounded-xl overflow-hidden shadow-2xl border-4 border-[#558b2f]">
