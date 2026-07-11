@@ -1,674 +1,483 @@
 // ============================================================
-// Grammar Cricket - Cosmic Cyber-Spectacle Canvas
-// Extreme vector graphics, slow-motion bullet time, and heavy VFX
+// Grammar Cricket — Google Doodle-style canvas renderer
+// Uses the original SVG sprite sheet at its native coordinate size.
 // ============================================================
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CricketOutcome } from '../engine/GameState';
+
+// Vite returns the SVG source as a string. Keeping the SVG at its native
+// 596.4 × 9965 coordinate system is essential because every crop below uses
+// those original coordinates.
+// @ts-ignore — Vite raw asset import
+import rawSvgString from '../assets/svg-sprite.svg?raw';
 
 interface CricketCanvasProps {
   outcome: CricketOutcome | null;
   onAnimationComplete: () => void;
   reducedMotion?: boolean;
-  teamColors?: [string, string];
 }
 
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  color: string;
-  life: number;
-  maxLife: number;
-  size: number;
-  gravity: number;
-  type: 'plasma' | 'shard' | 'stardust';
-  angle?: number;
-  spin?: number;
+type SpriteRect = readonly [number, number, number, number];
+
+const W = 800;
+const H = 480;
+const GROUND_Y = 422;
+const BATTER_X = 265;
+const BOWLER_X = 610;
+const STRIKER_WICKET_X = 205;
+const NON_STRIKER_WICKET_X = 660;
+const IMPACT_TIME = 760;
+
+const SPRITES = {
+  bat: [20, 61, 65.02, 64.57],
+  batter: [20, 146, 116, 193],
+  cloudLarge: [20, 667, 193.82, 55.34],
+  cloudSmall: [20, 743, 166.51, 46.29],
+  wheat: [20, 810, 66, 432],
+  crowdFront: [20, 2168, 556.4, 67.71],
+  crowdBack: [20, 2256, 504.75, 119.95],
+  snail: [20, 5209, 195.7, 190.95],
+  stadium: [20, 5420, 245.36, 172.2],
+  outSign: [20, 5746, 485.47, 469.67],
+  trophy: [20, 6650, 169.51, 163.5],
+} as const satisfies Record<string, SpriteRect>;
+
+// Exact frame order used by the original Doodle for the dirt burst.
+const DUST_FRAMES: readonly SpriteRect[] = [
+  [20, 3370, 254, 89],
+  [20, 3479, 254, 89],
+  [20, 3806, 254, 89],
+  [20, 3915, 254, 89],
+  [20, 4024, 254, 89],
+  [20, 4133, 254, 89],
+  [20, 4242, 254, 89],
+  [20, 4351, 254, 89],
+  [20, 4460, 254, 89],
+  [20, 4569, 254, 89],
+  [20, 3588, 254, 89],
+  [20, 3697, 254, 89],
+];
+
+// Original wicket-breaking sequence. The final pose is held for the
+// duplicated tail frames instead of repeatedly flashing back to the start.
+const WICKET_FRAMES: readonly SpriteRect[] = [
+  [20, 7058, 124, 184],
+  [20, 7262, 124, 184],
+  [20, 7466, 124, 184],
+  [20, 7670, 124, 184],
+  [20, 7874, 124, 184],
+  [20, 8078, 124, 184],
+  [20, 8282, 124, 184],
+  [20, 8690, 124, 184],
+  [20, 8894, 124, 184],
+  [20, 9098, 124, 184],
+  [20, 9302, 124, 184],
+  [20, 9506, 124, 184],
+  [20, 9710, 124, 184],
+];
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
-interface Shockwave {
-  x: number;
-  y: number;
-  radius: number;
-  maxRadius: number;
-  color: string;
-  life: number;
+function easeOutCubic(value: number): number {
+  const t = clamp(value, 0, 1);
+  return 1 - Math.pow(1 - t, 3);
 }
 
-interface Ball {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  trail: Array<{ x: number; y: number; size: number }>;
+function drawSprite(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  rect: SpriteRect,
+  x: number,
+  y: number,
+  scale = 1,
+  flip = false,
+  rotation = 0,
+  alpha = 1,
+): void {
+  const [sx, sy, sw, sh] = rect;
+  const sourceWidth = sw + 10;
+  const sourceHeight = sh + 10;
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+
+  ctx.save();
+  ctx.translate(x, y);
+  if (flip) ctx.scale(-1, 1);
+  if (rotation) ctx.rotate(rotation);
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(
+    image,
+    sx - 5,
+    sy - 5,
+    sourceWidth,
+    sourceHeight,
+    -drawWidth / 2,
+    -drawHeight,
+    drawWidth,
+    drawHeight,
+  );
+  ctx.restore();
+}
+
+function resultLabel(outcome: CricketOutcome): string {
+  switch (outcome) {
+    case 'six': return 'SIX!';
+    case 'four': return 'FOUR!';
+    case 'three': return '3 RUNS';
+    case 'two': return '2 RUNS';
+    case 'one': return '1 RUN';
+    case 'run_out': return 'RUN OUT!';
+    case 'bowled': return 'BOWLED!';
+    case 'dot': return 'DOT BALL';
+  }
 }
 
 const CricketCanvas: React.FC<CricketCanvasProps> = ({
   outcome,
   onAnimationComplete,
   reducedMotion = false,
-  teamColors = ['#00ffcc', '#ff0055'], // Cyber defaults if not passed
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
-  
-  // Custom Time-Dilation System Engine
-  const lastTimeRef = useRef<number>(0);
-  const virtualTimeRef = useRef<number>(0);
-  const timeScaleRef = useRef<number>(1);
-  
-  const particlesRef = useRef<Particle[]>([]);
-  const shockwavesRef = useRef<Shockwave[]>([]);
-  const ballRef = useRef<Ball | null>(null);
-  const bailsRef = useRef<Array<{ x: number; y: number; vx: number; vy: number; angle: number; spin: number }>>([]);
-  
-  const hasTriggeredImpactRef = useRef<boolean>(false);
-  const completedRef = useRef<boolean>(false);
+  const spriteRef = useRef<HTMLImageElement | null>(null);
+  const completeRef = useRef(onAnimationComplete);
+  const [spriteLoaded, setSpriteLoaded] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const engineState = useRef({
+    animFrame: 0,
+    virtualTime: 0,
+    lastTime: 0,
+    completed: false,
+  });
 
-  const CANVAS_W = 800;
-  const CANVAS_H = 480;
-  const PITCH_Y = CANVAS_H * 0.68;
-  const BATTING_X = CANVAS_W * 0.25;
-  const BOWLING_X = CANVAS_W * 0.75;
-  const STUMP_HEIGHT = 60;
-  const STUMP_W = 5;
-  const STUMP_SPACING = 10;
-
-  // Hyper-Neon Palette
-  const NET_COLORS = {
-    spaceBg: '#05050f',
-    gridLine: 'rgba(0, 255, 204, 0.08)',
-    pitchLight: '#111827',
-    stumpGlow: '#00ffcc',
-    ballPlasma: '#ff0055',
-    textGlow: '#00f0ff'
-  };
-
-  // ============================================================
-  // PROCEDURAL VIRTUAL WORLD BACKGROUND
-  // ============================================================
-  const drawCyberWorld = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, vTime: number) => {
-    // 1. Deep Space Void
-    ctx.fillStyle = NET_COLORS.spaceBg;
-    ctx.fillRect(0, 0, w, h);
-
-    // 2. Cosmic Nebula Glow
-    const nebula = ctx.createRadialGradient(w/2, h*0.3, 10, w/2, h*0.3, w*0.6);
-    nebula.addColorStop(0, 'rgba(76, 29, 149, 0.25)'); // Deep purple
-    nebula.addColorStop(0.5, 'rgba(15, 23, 42, 0)');
-    ctx.fillStyle = nebula;
-    ctx.fillRect(0, 0, w, h);
-
-    // 3. Cyber Grid Matrix (Perspective Simulation)
-    ctx.strokeStyle = NET_COLORS.gridLine;
-    ctx.lineWidth = 1.5;
-    const horizonY = h * 0.45;
-    
-    // Vertical vanishing lines
-    for (let i = -w; i <= w * 2; i += 40) {
-      ctx.beginPath();
-      ctx.moveTo(w / 2 + (i - w / 2) * 0.05, horizonY);
-      ctx.lineTo(i, h);
-      ctx.stroke();
-    }
-    // Horizontal pulsing grid lines
-    for (let y = horizonY; y < h; y += 18) {
-      const pulse = Math.sin(vTime * 0.005 + y * 0.1) * 0.3 + 0.7;
-      ctx.strokeStyle = `rgba(0, 255, 204, ${0.04 * pulse})`;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
-
-    // 4. Neon Boundary Ring
-    ctx.save();
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = teamColors[0];
-    ctx.strokeStyle = `rgba(${hexToRgb(teamColors[0]).join(',')}, 0.3)`;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.ellipse(w / 2, h * 0.78, w * 0.46, h * 0.18, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-
-    // 5. The Light-Grid Pitch
-    const pitchW = 90;
-    const pitchH = 150;
-    ctx.save();
-    ctx.fillStyle = 'rgba(17, 24, 39, 0.85)';
-    ctx.strokeStyle = teamColors[1];
-    ctx.lineWidth = 2;
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = teamColors[1];
-    
-    ctx.beginPath();
-    ctx.moveTo(w/2 - pitchW/2, PITCH_Y - pitchH/2);
-    ctx.lineTo(w/2 + pitchW/2, PITCH_Y - pitchH/2);
-    ctx.lineTo(w/2 + pitchW*0.7, PITCH_Y + pitchH/2);
-    ctx.lineTo(w/2 - pitchW*0.7, PITCH_Y + pitchH/2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-
-  }, [PITCH_Y, teamColors]);
-
-  // ============================================================
-  // CYBERNETIC ENTITY MODELS
-  // ============================================================
-  function drawCyberStumps(ctx: CanvasRenderingContext2D, cx: number, y: number, intact: boolean = true) {
-    if (!intact) return;
-    const stumpsX = [cx - STUMP_SPACING, cx, cx + STUMP_SPACING];
-    
-    ctx.save();
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = NET_COLORS.stumpGlow;
-    ctx.strokeStyle = NET_COLORS.stumpGlow;
-    ctx.lineWidth = 3;
-
-    stumpsX.forEach(sx => {
-      ctx.beginPath();
-      ctx.moveTo(sx, y);
-      ctx.lineTo(sx, y - STUMP_HEIGHT);
-      ctx.stroke();
-      
-      // Node endpoints
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(sx, y - STUMP_HEIGHT, 2.5, 0, Math.PI*2); ctx.fill();
-    });
-
-    // Neon Bails
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx - STUMP_SPACING - 2, y - STUMP_HEIGHT - 3);
-    ctx.lineTo(cx + STUMP_SPACING + 2, y - STUMP_HEIGHT - 3);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawCyberPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, swingAngle: number, color: string, isBatsman: boolean) {
-    ctx.save();
-    ctx.translate(x, y);
-    if (!isBatsman) ctx.scale(-1, 1); // Bowler faces left
-
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = color;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
-
-    // Energy wireframe joints & lines
-    ctx.beginPath();
-    // Spine / Torso
-    ctx.moveTo(0, -25); ctx.lineTo(0, -48);
-    // Legs
-    ctx.moveTo(0, -25); ctx.lineTo(-8, 0);
-    ctx.moveTo(0, -25); ctx.lineTo(8, 0);
-    ctx.stroke();
-
-    // Glowing energy core center
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(0, -38, 4, 0, Math.PI*2); ctx.fill();
-
-    // Digital Visor Head
-    ctx.strokeStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(0, -56, 8, 0, Math.PI*2); ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.fillRect(-6, -58, 12, 4); // Laser Visor
-
-    // Action Weapons (Arms & Bat)
-    ctx.save();
-    ctx.translate(0, -44);
-    if (isBatsman) {
-      ctx.rotate(swingAngle);
-      // Arms pulling forward
-      ctx.strokeStyle = '#ffffff';
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(10, 15); ctx.stroke();
-      
-      // Plasma Lightsaber Bat
-      const bladeGrad = ctx.createLinearGradient(10, 15, 25, 65);
-      bladeGrad.addColorStop(0, '#ffffff');
-      bladeGrad.addColorStop(0.2, color);
-      bladeGrad.addColorStop(1, 'transparent');
-      
-      ctx.strokeStyle = bladeGrad;
-      ctx.lineWidth = 6;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(10, 15); ctx.lineTo(35, 65); ctx.stroke();
-    } else {
-      // Bowler dynamic arm sweep
-      ctx.rotate(swingAngle);
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 22); ctx.stroke();
-    }
-    ctx.restore();
-    ctx.restore();
-  }
-
-  // ============================================================
-  // VFX TRIGGER ENGINES
-  // ============================================================
-  function addPlasmaBurst(x: number, y: number, color: string) {
-    // Spatial rings
-    shockwavesRef.current.push({
-      x, y, radius: 2, maxRadius: 90, color, life: 25
-    });
-    // Velocity cyber particles
-    for (let i = 0; i < 45; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 4 + Math.random() * 9;
-      particlesRef.current.push({
-        x, y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        color: Math.random() > 0.4 ? color : '#ffffff',
-        life: 80, maxLife: 80,
-        size: 2 + Math.random() * 3,
-        gravity: 0.05,
-        type: 'plasma'
-      });
-    }
-  }
-
-  function addDigitalShatter(x: number, y: number) {
-    for (let i = 0; i < 25; i++) {
-      particlesRef.current.push({
-        x: x + (Math.random() - 0.5) * 20,
-        y: y - Math.random() * STUMP_HEIGHT,
-        vx: (Math.random() - 0.5) * 8,
-        vy: -3 - Math.random() * 7,
-        color: NET_COLORS.stumpGlow,
-        life: 60, maxLife: 60,
-        size: 4 + Math.random() * 5,
-        gravity: 0.2,
-        type: 'shard',
-        angle: Math.random() * Math.PI,
-        spin: (Math.random() - 0.5) * 0.3
-      });
-    }
-  }
-
-  // ============================================================
-  // CORE ADVANCED PHYS-ENGINE & RENDER LOOP
-  // ============================================================
-  const animate = useCallback((timestamp: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    if (!lastTimeRef.current) lastTimeRef.current = timestamp;
-    const dt = timestamp - lastTimeRef.current;
-    lastTimeRef.current = timestamp;
-
-    // Apply Time-Dilation Multiplier dynamically
-    virtualTimeRef.current += dt * timeScaleRef.current;
-    const vTime = virtualTimeRef.current;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawCyberWorld(ctx, canvas.width, canvas.height, vTime);
-
-    // Dynamic Ball Processing
-    if (ballRef.current) {
-      const ball = ballRef.current;
-      ball.x += ball.vx * timeScaleRef.current;
-      ball.y += ball.vy * timeScaleRef.current;
-      ball.vy += 0.15 * timeScaleRef.current; // gravity drift
-
-      ball.trail.push({ x: ball.x, y: ball.y, size: ball.radius });
-      if (ball.trail.length > 15) ball.trail.shift();
-
-      // Draw plasma particle tail
-      ball.trail.forEach((pt, index) => {
-        ctx.save();
-        ctx.globalAlpha = index / ball.trail.length;
-        ctx.fillStyle = NET_COLORS.ballPlasma;
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = NET_COLORS.ballPlasma;
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, pt.size * (index / ball.trail.length) * 1.5, 0, Math.PI*2);
-        ctx.fill();
-        ctx.restore();
-      });
-
-      // Standard render ball
-      ctx.save();
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = '#ffffff';
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-
-    // Process Active Shockwaves
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    shockwavesRef.current = shockwavesRef.current.filter(sw => {
-      sw.radius += (sw.maxRadius - sw.radius) * 0.1;
-      sw.life--;
-      
-      ctx.strokeStyle = sw.color;
-      ctx.lineWidth = (sw.life / 25) * 5;
-      ctx.beginPath();
-      ctx.ellipse(sw.x, sw.y, sw.radius, sw.radius * 0.4, 0, 0, Math.PI*2);
-      ctx.stroke();
-      return sw.life > 0;
-    });
-    ctx.restore();
-
-    // Process Active Particles System
-    particlesRef.current = particlesRef.current.filter(p => {
-      p.life--;
-      p.x += p.vx * timeScaleRef.current;
-      p.y += p.vy * timeScaleRef.current;
-      p.vy += p.gravity * timeScaleRef.current;
-
-      const alpha = p.life / p.maxLife;
-      ctx.save();
-      ctx.globalAlpha = alpha;
-
-      if (p.type === 'plasma') {
-        ctx.globalCompositeOperation = 'screen';
-        ctx.fillStyle = p.color;
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = p.color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
-      } else if (p.type === 'shard' && p.angle !== undefined && p.spin !== undefined) {
-        p.angle += p.spin * timeScaleRef.current;
-        ctx.fillStyle = p.color;
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-        ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
-      }
-      ctx.restore();
-      return p.life > 0;
-    });
-
-    // Handle Scenarios Routing base on Virtual Timeline markers
-    switch (outcome) {
-      case 'six': handleSixFlow(ctx, vTime); break;
-      case 'four': handleFourFlow(ctx, vTime); break;
-      case 'bowled': handleBowledFlow(ctx, vTime); break;
-      case 'run_out': handleRunOutFlow(ctx, vTime); break;
-      case 'dot': handleDotFlow(ctx, vTime); break;
-      default: handleDotFlow(ctx, vTime);
-    }
-
-    updateAndDrawBails(ctx);
-
-    // End condition detection mapping
-    const timelineLimit = getInningsTimelineLimit(outcome);
-    if (vTime >= timelineLimit && !completedRef.current) {
-      completedRef.current = true;
-      onAnimationComplete();
-      return;
-    }
-
-    animRef.current = requestAnimationFrame(animate);
-  }, [outcome, drawCyberWorld, onAnimationComplete]);
-
-  // ============================================================
-  // PROCEDURAL SCENARIOS FLOW ROUTERS
-  // ============================================================
-  function getInningsTimelineLimit(o: CricketOutcome | null): number {
-    switch (o) {
-      case 'six': return 3200;
-      case 'four': return 2800;
-      case 'bowled': return 2500;
-      case 'run_out': return 3500;
-      default: return 2000;
-    }
-  }
-
-  function handleSixFlow(ctx: CanvasRenderingContext2D, vt: number) {
-    // Bowler positioning
-    drawCyberPlayer(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1], false);
-
-    // BULLET-TIME MATRIX EFFECT: Slow down heavily right before hit point (300ms to 600ms)
-    if (vt > 280 && vt < 650) {
-      timeScaleRef.current = 0.12; // Drop flow to 12% slow-motion scale
-    } else if (vt >= 650) {
-      timeScaleRef.current = 1.4;  // Snap back into hyper-acceleration!
-    }
-
-    // Ball movement calculation
-    if (ballRef.current) {
-      if (vt < 350) {
-        // incoming vector
-        ballRef.current.x = BOWLING_X - (vt / 350) * (BOWLING_X - BATTING_X);
-        ballRef.current.y = PITCH_Y - 30 - Math.sin((vt/350)*Math.PI)*40;
-      } else {
-        // Exploded outward trajectory
-        const postT = (vt - 350) / 2500;
-        ballRef.current.x = BATTING_X + postT * (CANVAS_W * 0.9);
-        ballRef.current.y = (PITCH_Y - 20) - Math.sin(postT * Math.PI) * 320;
-        ballRef.current.radius = 8;
-      }
-      drawBall(ctx, ballRef.current);
-    }
-
-    // Swing swing animation window
-    const swing = vt < 350 ? (vt / 350) * -1.2 : -1.2 + ((vt - 350) / 400) * 2.5;
-    drawCyberPlayer(ctx, BATTING_X, PITCH_Y, Math.min(swing, 1.2), teamColors[0], true);
-    drawCyberStumps(ctx, BATTING_X - 15, PITCH_Y, true);
-
-    // Connect moment explosion trigger
-    if (vt >= 350 && !hasTriggeredImpactRef.current) {
-      addPlasmaBurst(BATTING_X + 15, PITCH_Y - 30, teamColors[0]);
-      hasTriggeredImpactRef.current = true;
-    }
-
-    if (vt > 500) {
-      drawBanner(ctx, 'QUANTUM SIX!', 'Tore through the stratosphere!', CANVAS_W, CANVAS_H, '#00ffff', Math.min(1, (vt - 500)/300));
-    }
-  }
-
-  function handleFourFlow(ctx: CanvasRenderingContext2D, vt: number) {
-    drawCyberPlayer(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1], false);
-
-    if (vt > 250 && vt < 550) timeScaleRef.current = 0.15;
-    else timeScaleRef.current = 1.6;
-
-    if (ballRef.current) {
-      if (vt < 320) {
-        ballRef.current.x = BOWLING_X - (vt / 320) * (BOWLING_X - BATTING_X);
-        ballRef.current.y = PITCH_Y - 20;
-      } else {
-        const postT = (vt - 320) / 2000;
-        ballRef.current.x = BATTING_X + postT * CANVAS_W;
-        ballRef.current.y = PITCH_Y - Math.abs(Math.sin(vt * 0.04) * 12);
-      }
-      drawBall(ctx, ballRef.current);
-    }
-
-    const swing = vt < 320 ? (vt / 320) * -0.9 : -0.9 + ((vt - 320) / 300) * 2.0;
-    drawCyberPlayer(ctx, BATTING_X, PITCH_Y, Math.min(swing, 1.0), teamColors[0], true);
-    drawCyberStumps(ctx, BATTING_X - 15, PITCH_Y, true);
-
-    if (vt >= 320 && !hasTriggeredImpactRef.current) {
-      addPlasmaBurst(BATTING_X + 10, PITCH_Y - 20, '#34d399');
-      hasTriggeredImpactRef.current = true;
-    }
-
-    if (vt > 450) {
-      drawBanner(ctx, 'LASER FOUR!', 'Searing velocity ray shot!', CANVAS_W, CANVAS_H, '#34d399', Math.min(1, (vt - 450)/300));
-    }
-  }
-
-  function handleBowledFlow(ctx: CanvasRenderingContext2D, vt: number) {
-    drawCyberPlayer(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1], false);
-
-    // Slow down right as the ball splits the stumps apart
-    if (vt > 450 && vt < 850) timeScaleRef.current = 0.2;
-    else timeScaleRef.current = 1.0;
-
-    const targetStumpX = BATTING_X - 15;
-
-    if (ballRef.current) {
-      if (vt < 500) {
-        ballRef.current.x = BOWLING_X - (vt / 500) * (BOWLING_X - targetStumpX);
-        ballRef.current.y = PITCH_Y - 20 - Math.sin((vt/500)*Math.PI)*15;
-        drawBall(ctx, ballRef.current);
-      }
-    }
-
-    // Batsman freezes out completely shocked
-    drawCyberPlayer(ctx, BATTING_X, PITCH_Y, -0.4, teamColors[0], true);
-
-    if (vt >= 500) {
-      // Stumps disintegration system activation
-      if (!hasTriggeredImpactRef.current) {
-        addDigitalShatter(targetStumpX, PITCH_Y);
-        shockwavesRef.current.push({ x: targetStumpX, y: PITCH_Y, radius: 2, maxRadius: 60, color: '#ff0055', life: 20 });
-        hasTriggeredImpactRef.current = true;
-      }
-    } else {
-      drawCyberStumps(ctx, targetStumpX, PITCH_Y, true);
-    }
-
-    if (vt > 800) {
-      drawBanner(ctx, 'MATRIX BOWLED!', 'Stumps completely dissolved!', CANVAS_W, CANVAS_H, '#ff0055', Math.min(1, (vt - 800)/300));
-    }
-  }
-
-  function handleRunOutFlow(ctx: CanvasRenderingContext2D, vt: number) {
-    drawCyberPlayer(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1], false);
-    
-    // Smooth translation running animation vector
-    const runRatio = Math.min(vt / 2500, 1);
-    const runnerX = BATTING_X + runRatio * 160;
-    drawCyberPlayer(ctx, runnerX, PITCH_Y, Math.sin(vt * 0.02) * 0.4, teamColors[0], true);
-
-    if (vt > 1800 && vt < 2400) timeScaleRef.current = 0.25; // Dramatic dive slow-mo window
-    else timeScaleRef.current = 1.2;
-
-    if (ballRef.current) {
-      if (vt > 1500) {
-        const throwT = Math.min((vt - 1500) / 600, 1);
-        ballRef.current.x = (BOWLING_X - 100) - throwT * ((BOWLING_X - 100) - BATTING_X);
-        ballRef.current.y = PITCH_Y - 40 - Math.sin(throwT * Math.PI) * 50;
-        drawBall(ctx, ballRef.current);
-      }
-    }
-
-    if (vt >= 2100) {
-      drawCyberStumps(ctx, BATTING_X, PITCH_Y, false);
-      if (!hasTriggeredImpactRef.current) {
-        addDigitalShatter(BATTING_X, PITCH_Y);
-        hasTriggeredImpactRef.current = true;
-      }
-    } else {
-      drawCyberStumps(ctx, BATTING_X, PITCH_Y, true);
-    }
-
-    if (vt > 2400) {
-      drawBanner(ctx, 'CYBER RUN OUT!', 'Intercepted by precision beam!', CANVAS_W, CANVAS_H, '#ef4444', Math.min(1, (vt - 2400)/300));
-    }
-  }
-
-  function handleDotFlow(ctx: CanvasRenderingContext2D, vt: number) {
-    drawCyberPlayer(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1], false);
-    if (ballRef.current && vt < 600) {
-      ballRef.current.x = BOWLING_X - (vt / 600) * (BOWLING_X - BATTING_X);
-      ballRef.current.y = PITCH_Y - 10;
-      drawBall(ctx, ballRef.current);
-    }
-    drawCyberPlayer(ctx, BATTING_X, PITCH_Y, vt > 300 && vt < 600 ? 0.3 : 0, teamColors[0], true);
-    drawCyberStumps(ctx, BATTING_X - 15, PITCH_Y, true);
-
-    if (vt > 700) {
-      drawBanner(ctx, 'SECTOR SHIELDED', 'Defended inside perimeter parameters.', CANVAS_W, CANVAS_H, '#6b7280', Math.min(1, (vt - 700)/300));
-    }
-  }
-
-  function updateAndDrawBails(ctx: CanvasRenderingContext2D) {
-    bailsRef.current = bailsRef.current.filter(b => {
-      b.x += b.vx * timeScaleRef.current;
-      b.y += b.vy * timeScaleRef.current;
-      b.vy += 0.3 * timeScaleRef.current;
-      b.angle += b.spin * timeScaleRef.current;
-
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(b.angle);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(8, 0); ctx.stroke();
-      ctx.restore();
-      return b.y < CANVAS_H + 20;
-    });
-  }
-
-  // ============================================================
-  // COMPONENT MOUNT ENGINE LINKING
-  // ============================================================
   useEffect(() => {
-    if (!outcome) return;
+    completeRef.current = onAnimationComplete;
+  }, [onAnimationComplete]);
 
-    completedRef.current = false;
-    hasTriggeredImpactRef.current = false;
-    particlesRef.current = [];
-    shockwavesRef.current = [];
-    bailsRef.current = [];
-    
-    virtualTimeRef.current = 0;
-    lastTimeRef.current = performance.now();
-    timeScaleRef.current = 1;
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl = '';
 
-    ballRef.current = {
-      x: BOWLING_X,
-      y: PITCH_Y - 40,
-      vx: -12,
-      vy: 0.5,
-      radius: 5,
-      trail: []
-    };
+    try {
+      if (!rawSvgString || !rawSvgString.includes('<svg')) {
+        throw new Error('The Doodle sprite sheet is empty or invalid.');
+      }
 
-    if (reducedMotion) {
-      setTimeout(() => {
-        if (!completedRef.current) {
-          completedRef.current = true;
-          onAnimationComplete();
+      // Do not rewrite width, height or viewBox. Stretching the SVG changes
+      // the pixel coordinate system and makes every source crop incorrect.
+      const blob = new Blob([rawSvgString], {
+        type: 'image/svg+xml;charset=utf-8',
+      });
+      objectUrl = URL.createObjectURL(blob);
+
+      const image = new Image();
+      image.decoding = 'async';
+      image.onload = () => {
+        if (disposed) return;
+        spriteRef.current = image;
+        setSpriteLoaded(true);
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = '';
+      };
+      image.onerror = () => {
+        if (!disposed) {
+          setErrorMsg('The browser could not decode svg-sprite.svg.');
         }
-      }, 1500);
-      return;
+      };
+      image.src = objectUrl;
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Unable to load the Doodle graphics.');
     }
-
-    let active = true;
-    const frame = (ts: number) => {
-      if (!active) return;
-      animate(ts);
-    };
-    animRef.current = requestAnimationFrame(frame);
 
     return () => {
-      active = false;
-      cancelAnimationFrame(animRef.current);
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [outcome, reducedMotion, onAnimationComplete, animate]);
+  }, []);
 
-  // Initial clean frame setup line
-  useEffect(() => {
+  const renderEngine = useCallback((timestamp: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    drawCyberWorld(ctx, canvas.width, canvas.height, 0);
-    drawCyberStumps(ctx, BATTING_X - 15, PITCH_Y, true);
-    drawCyberPlayer(ctx, BATTING_X, PITCH_Y, 0, teamColors[0], true);
-    drawCyberPlayer(ctx, BOWLING_X, PITCH_Y, 0, teamColors[1], false);
-  }, [drawCyberWorld, teamColors]);
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+
+    const state = engineState.current;
+    if (state.lastTime === 0) state.lastTime = timestamp;
+    const dt = Math.min(timestamp - state.lastTime, 50);
+    state.lastTime = timestamp;
+
+    if (outcome) state.virtualTime += reducedMotion ? dt * 5 : dt;
+    const vt = state.virtualTime;
+    const image = spriteRef.current;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // Sky
+    const sky = ctx.createLinearGradient(0, 0, 0, 285);
+    sky.addColorStop(0, '#dff4f7');
+    sky.addColorStop(1, '#f8fbda');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#fff3a0';
+    ctx.beginPath();
+    ctx.arc(680, 65, 34, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (image) {
+      drawSprite(ctx, image, SPRITES.cloudLarge, 180, 105, 0.8);
+      drawSprite(ctx, image, SPRITES.cloudSmall, 620, 145, 0.72);
+    }
+
+    // Outfield
+    ctx.fillStyle = '#8fbd49';
+    ctx.fillRect(0, 190, W, H - 190);
+    ctx.fillStyle = '#74a53a';
+    ctx.beginPath();
+    ctx.ellipse(W / 2, 390, 540, 220, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+
+    if (image) {
+      drawSprite(ctx, image, SPRITES.stadium, W / 2, 278, 1.55);
+      drawSprite(ctx, image, SPRITES.crowdBack, W / 2, 305, 1.12);
+
+      const crowdBounce = Math.sin(timestamp * 0.008) * (outcome ? 3 : 1);
+      drawSprite(ctx, image, SPRITES.crowdFront, W / 2, 322 + crowdBounce, 1.15);
+
+      [45, 90, 710, 755].forEach((x) => {
+        drawSprite(ctx, image, SPRITES.wheat, x, 345, 0.38, x > W / 2);
+      });
+    }
+
+    // Pitch
+    ctx.fillStyle = '#c9a56c';
+    ctx.beginPath();
+    ctx.moveTo(250, 310);
+    ctx.lineTo(550, 310);
+    ctx.lineTo(630, 455);
+    ctx.lineTo(170, 455);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(220, 345, 360, 80);
+
+    if (errorMsg) {
+      ctx.fillStyle = 'rgba(36, 45, 22, 0.88)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 22px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Graphics could not be loaded', W / 2, H / 2 - 12);
+      ctx.font = '16px Arial, sans-serif';
+      ctx.fillText(errorMsg, W / 2, H / 2 + 20);
+      return;
+    }
+
+    if (!spriteLoaded || !image) {
+      ctx.fillStyle = 'rgba(64, 73, 31, 0.42)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 22px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Loading cricket graphics…', W / 2, H / 2);
+      return;
+    }
+
+    const isWicketOutcome = outcome === 'bowled' || outcome === 'run_out';
+    const breakStart = outcome === 'run_out' ? IMPACT_TIME + 760 : IMPACT_TIME;
+    let wicketFrame = WICKET_FRAMES[0];
+    if (isWicketOutcome && vt >= breakStart) {
+      const frameIndex = clamp(
+        Math.floor((vt - breakStart) / 58),
+        0,
+        WICKET_FRAMES.length - 1,
+      );
+      wicketFrame = WICKET_FRAMES[frameIndex];
+    }
+
+    drawSprite(ctx, image, wicketFrame, STRIKER_WICKET_X, GROUND_Y - 2, 0.56);
+    drawSprite(ctx, image, WICKET_FRAMES[0], NON_STRIKER_WICKET_X, GROUND_Y - 2, 0.5, true, 0, 0.9);
+
+    let ballX = BOWLER_X - 45;
+    let ballY = 355;
+    let showBall = false;
+    let batRotation = -0.55;
+    let batterRotation = 0;
+    let bowlerRotation = Math.sin(timestamp * 0.004) * 0.025;
+
+    if (outcome) {
+      showBall = true;
+
+      if (vt < 310) {
+        bowlerRotation = -0.06 * easeOutCubic(vt / 310);
+      } else if (vt < IMPACT_TIME) {
+        const t = easeOutCubic((vt - 310) / (IMPACT_TIME - 310));
+        ballX = BOWLER_X - 45 + (BATTER_X - BOWLER_X + 25) * t;
+        ballY = 355 - Math.sin(t * Math.PI) * 52;
+        bowlerRotation = 0.08 * (1 - t);
+      } else {
+        const post = vt - IMPACT_TIME;
+
+        if (outcome === 'bowled') {
+          ballX = STRIKER_WICKET_X + 8;
+          ballY = GROUND_Y - 44 + Math.min(post / 12, 22);
+        } else {
+          const swing = clamp(post / 220, 0, 1);
+          batRotation = -0.55 + Math.sin(swing * Math.PI) * 1.45;
+          batterRotation = -Math.sin(swing * Math.PI) * 0.08;
+
+          switch (outcome) {
+            case 'six': {
+              const t = post / 950;
+              ballX = BATTER_X - 18 - t * 760;
+              ballY = 342 - t * 365 - Math.sin(clamp(t, 0, 1) * Math.PI) * 90;
+              break;
+            }
+            case 'four': {
+              const t = post / 900;
+              ballX = BATTER_X - 18 - t * 640;
+              ballY = 385 - Math.abs(Math.sin(post * 0.018)) * 18;
+              break;
+            }
+            case 'three':
+            case 'two':
+            case 'one':
+            case 'dot': {
+              const distance = outcome === 'three' ? 430 : outcome === 'two' ? 320 : outcome === 'one' ? 230 : 95;
+              const t = easeOutCubic(post / 800);
+              ballX = BATTER_X - 18 - distance * t;
+              ballY = 383 - Math.sin(t * Math.PI) * (outcome === 'dot' ? 12 : 34);
+              break;
+            }
+            case 'run_out': {
+              const firstLeg = clamp(post / 620, 0, 1);
+              ballX = BATTER_X - 18 - 260 * firstLeg;
+              ballY = 382 - Math.sin(firstLeg * Math.PI) * 32;
+              if (post > 620) {
+                const returnLeg = clamp((post - 620) / 520, 0, 1);
+                ballX = BATTER_X - 278 + 445 * returnLeg;
+                ballY = 380 - Math.sin(returnLeg * Math.PI) * 48;
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const bowlerBob = outcome ? 0 : Math.sin(timestamp * 0.0035) * 2;
+    drawSprite(ctx, image, SPRITES.snail, BOWLER_X, GROUND_Y + bowlerBob, 0.54, true, bowlerRotation);
+
+    const batterBob = outcome ? 0 : Math.sin(timestamp * 0.003) * 2.5;
+    drawSprite(ctx, image, SPRITES.batter, BATTER_X, GROUND_Y + batterBob, 0.62, false, batterRotation);
+    drawSprite(ctx, image, SPRITES.bat, BATTER_X - 53, GROUND_Y - 57 + batterBob, 0.9, false, batRotation);
+
+    if (outcome && vt >= IMPACT_TIME && outcome !== 'bowled') {
+      const dustAge = vt - IMPACT_TIME;
+      const dustIndex = Math.floor(dustAge / 55);
+      if (dustIndex >= 0 && dustIndex < DUST_FRAMES.length) {
+        drawSprite(ctx, image, DUST_FRAMES[dustIndex], BATTER_X - 12, GROUND_Y + 10, 0.72, true, 0, 0.85);
+      }
+    }
+
+    if (showBall) {
+      ctx.save();
+      ctx.fillStyle = '#b52b2b';
+      ctx.beginPath();
+      ctx.arc(ballX, ballY, 7.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(ballX - 1.2, ballY, 4.2, -0.85, 0.85);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (outcome && vt > IMPACT_TIME + 180 && (outcome === 'six' || outcome === 'four')) {
+      const intensity = outcome === 'six' ? 30 : 18;
+      const age = (vt - IMPACT_TIME - 180) / 1000;
+      const colours = ['#f9ec31', '#ffffff', '#ef6c43', '#63b646', '#55b7d9'];
+      for (let i = 0; i < intensity; i += 1) {
+        const angle = (i / intensity) * Math.PI * 2 + i * 0.71;
+        const speed = 85 + (i % 7) * 19;
+        const px = W / 2 + Math.cos(angle) * speed * age;
+        const py = 190 + Math.sin(angle) * speed * age + 92 * age * age;
+        const alpha = clamp(1 - age / 1.65, 0, 1);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = colours[i % colours.length];
+        ctx.fillRect(px, py, 5 + (i % 3) * 2, 5 + ((i + 1) % 3) * 2);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    if (outcome && vt > IMPACT_TIME + 420) {
+      if (isWicketOutcome) {
+        drawSprite(ctx, image, SPRITES.outSign, W / 2, 360, 0.28, false, 0, clamp((vt - IMPACT_TIME - 420) / 220, 0, 1));
+      } else {
+        const badgeY = 78;
+        ctx.save();
+        ctx.fillStyle = '#6f4a24';
+        ctx.beginPath();
+        ctx.roundRect(W / 2 - 115, badgeY - 36, 230, 72, 16);
+        ctx.fill();
+        ctx.strokeStyle = '#f9ec31';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.fillStyle = '#fff7c2';
+        ctx.font = '900 31px "Trebuchet MS", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(resultLabel(outcome), W / 2, badgeY + 1);
+        ctx.restore();
+
+        if (outcome === 'six') {
+          drawSprite(ctx, image, SPRITES.trophy, W / 2 + 154, 156, 0.34, false, Math.sin(timestamp * 0.008) * 0.035);
+        }
+      }
+    }
+
+    if (outcome && vt > 2550 && !state.completed) {
+      state.completed = true;
+      completeRef.current();
+    }
+  }, [errorMsg, outcome, reducedMotion, spriteLoaded]);
+
+  useEffect(() => {
+    const state = engineState.current;
+    state.completed = false;
+    state.lastTime = 0;
+    state.virtualTime = 0;
+
+    const loop = (timestamp: number) => {
+      renderEngine(timestamp);
+      if (!engineState.current.completed) {
+        engineState.current.animFrame = requestAnimationFrame(loop);
+      }
+    };
+
+    state.animFrame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(state.animFrame);
+  }, [outcome, renderEngine]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={CANVAS_W}
-      height={CANVAS_H}
-      className="w-full h-full object-contain rounded-xl shadow-2xl bg-black border border-indigo-500/30"
-      aria-label="Quantum Space Cricket Display Canvas"
-    />
+    <div
+      className="aspect-[5/3] w-full overflow-hidden rounded-xl border-4 border-[#558b2f] shadow-2xl"
+      role="img"
+      aria-label="Animated cricket match in a playful Doodle-inspired style"
+    >
+      <canvas
+        ref={canvasRef}
+        width={W}
+        height={H}
+        className="block h-full w-full bg-[#8fbd49]"
+      />
+    </div>
   );
 };
 
