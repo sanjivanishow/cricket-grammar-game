@@ -1,5 +1,5 @@
 // ============================================================
-// Grammar Cricket - 16-Bit Retro Arcade Edition
+// Grammar Cricket - 16-Bit Retro Arcade Edition (Full Version)
 // Chunky, pixel-perfect graphics using pure HTML5 Canvas
 // ============================================================
 import React, { useRef, useEffect, useCallback } from 'react';
@@ -51,7 +51,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   const bailsRef = useRef<Array<{ x: number; y: number; vx: number; vy: number; angle: number; spin: number }>>([]);
   const hasHitRef = useRef<boolean>(false);
   
-  // Dimensions and Positioning (Kept original scale, drawing chunky)
+  // Dimensions and Positioning 
   const CANVAS_W = 800;
   const CANVAS_H = 480;
   const PITCH_Y = CANVAS_H * 0.65;
@@ -154,7 +154,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     drawFielder(ctx, 120, 200, teamColors[1]); // Deep backward square
     drawFielder(ctx, 500, 160, teamColors[1]); // Point / Cover
     drawFielder(ctx, 650, 420, teamColors[1]); // Mid on
-  }, []);
+  }, [BATTING_X, BOWLING_X, PITCH_Y, teamColors]);
 
   // ============================================================
   // RETRO CHARACTER & EQUIPMENT DRAWING
@@ -499,7 +499,7 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   }, [outcome, reducedMotion, onAnimationComplete, drawField]);
 
   // ============================================================
-  // OUTCOME SEQUENCES (Logic preserved, draw calls updated)
+  // OUTCOME SEQUENCES & RUNNING LOGIC
   // ============================================================
   function renderSix(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) {
     const phase1 = Math.min(elapsed / 500, 1);
@@ -556,19 +556,61 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
     if (elapsed > 400) drawBanner(ctx, 'FOUR!', 'Pierces The Gap!', w, h, '#22c55e', 1);
   }
 
+  // Core Running Mechanics Function
+  function drawRunners(ctx: CanvasRenderingContext2D, elapsed: number, runs: number) {
+    const startDelay = 350;
+    const timePerRun = 800;
+    
+    if (elapsed < startDelay) {
+      // Players still at creases before setting off
+      drawNonStriker(ctx, BOWLING_X, PITCH_Y - 20, teamColors[0]);
+      drawBatsman(ctx, BATTING_X, PITCH_Y, -0.3, teamColors[0]);
+      return;
+    }
+
+    const totalProgress = Math.min((elapsed - startDelay) / timePerRun, runs);
+    const currentRun = Math.floor(totalProgress);
+    const legProgress = totalProgress % 1; // 0 to 1 progress for the current leg of the run
+    const isRunning = totalProgress < runs;
+    
+    // Retro arcade bounce effect while moving
+    const bounce = isRunning ? -Math.abs(Math.sin(elapsed / 40) * 10) : 0;
+
+    // Determine direction for this specific run (Run 1: Striker goes Right. Run 2: Left. etc)
+    const strikerGoingRight = currentRun % 2 === 0;
+    
+    const startX = strikerGoingRight ? BATTING_X : BOWLING_X;
+    const endX = strikerGoingRight ? BOWLING_X : BATTING_X;
+    const strikerX = startX + legProgress * (endX - startX);
+    
+    const nonStartX = strikerGoingRight ? BOWLING_X : BATTING_X;
+    const nonEndX = strikerGoingRight ? BATTING_X : BOWLING_X;
+    const nonStrikerX = nonStartX + legProgress * (nonEndX - nonStartX);
+
+    // Draw Non-Striker (slightly higher up/in background depth)
+    drawPixelPlayer(ctx, nonStrikerX, PITCH_Y - 20 + bounce, teamColors[0], { 
+      isBatting: true, isKeeper: false, facingRight: !strikerGoingRight 
+    });
+    
+    // Draw Striker (foreground)
+    drawPixelPlayer(ctx, strikerX, PITCH_Y + bounce, teamColors[0], { 
+      isBatting: true, isKeeper: false, facingRight: strikerGoingRight 
+    });
+  }
+
   function renderThreeRuns(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) {
     drawKeeper(ctx, BATTING_X - 60, PITCH_Y, teamColors[1]);
     drawStumps(ctx, BOWLING_X, PITCH_Y, true);
-    drawBowler(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1]);
+    drawBowler(ctx, BOWLING_X, PITCH_Y - 40, 1.0, teamColors[1]); // Moved up/out of the way
     
     if (elapsed > 300 && ballRef.current) {
       ballRef.current.x = BATTING_X + Math.min((elapsed - 300) / 800, 1) * w * 0.4;
       ballRef.current.y = PITCH_Y;
       drawBall(ctx, ballRef.current);
     }
-    const runCycle = elapsed > 400 ? Math.sin(elapsed / 50) * 16 : 0;
+    
     drawStumps(ctx, BATTING_X, PITCH_Y, true);
-    drawBatsman(ctx, BATTING_X + (elapsed > 400 ? ((elapsed - 400) % 300) * 0.12 : 0), PITCH_Y - Math.abs(runCycle), elapsed > 400 ? -0.4 : 0, teamColors[0]);
+    drawRunners(ctx, elapsed, 3);
     
     if (elapsed > 500) drawBanner(ctx, '3 RUNS', 'Great Running!', w, h, '#3b82f6', 1);
   }
@@ -576,39 +618,43 @@ const CricketCanvas: React.FC<CricketCanvasProps> = ({
   function renderTwoRuns(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) {
     drawKeeper(ctx, BATTING_X - 60, PITCH_Y, teamColors[1]);
     drawStumps(ctx, BOWLING_X, PITCH_Y, true);
-    drawBowler(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1]);
+    drawBowler(ctx, BOWLING_X, PITCH_Y - 40, 1.0, teamColors[1]); 
     
     if (elapsed > 250 && ballRef.current) {
       ballRef.current.x = BATTING_X + Math.min((elapsed - 250) / 700, 1) * w * 0.3;
       ballRef.current.y = PITCH_Y;
       drawBall(ctx, ballRef.current);
     }
+
     drawStumps(ctx, BATTING_X, PITCH_Y, true);
-    drawBatsman(ctx, BATTING_X, PITCH_Y, elapsed < 400 ? -0.5 : 0, teamColors[0]);
+    drawRunners(ctx, elapsed, 2);
+
     if (elapsed > 450) drawBanner(ctx, '2 RUNS', 'Comfortably Back.', w, h, '#a855f7', 1);
   }
 
   function renderOneRun(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) {
     drawKeeper(ctx, BATTING_X - 60, PITCH_Y, teamColors[1]);
     drawStumps(ctx, BOWLING_X, PITCH_Y, true);
-    drawBowler(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1]);
+    drawBowler(ctx, BOWLING_X, PITCH_Y - 40, 1.0, teamColors[1]); 
     
     if (elapsed > 200 && ballRef.current) {
       ballRef.current.x = BATTING_X + Math.min((elapsed - 200) / 500, 1) * w * 0.2;
       ballRef.current.y = PITCH_Y;
       drawBall(ctx, ballRef.current);
     }
+    
     drawStumps(ctx, BATTING_X, PITCH_Y, true);
-    drawBatsman(ctx, BATTING_X, PITCH_Y, elapsed < 350 ? -0.3 : 0, teamColors[0]);
+    drawRunners(ctx, elapsed, 1);
+
     if (elapsed > 400) drawBanner(ctx, '1 RUN', 'Quick Single.', w, h, '#94a3b8', 1);
   }
 
   function renderRunOut(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number) {
     drawKeeper(ctx, BATTING_X - 60, PITCH_Y, teamColors[1]);
-    drawBowler(ctx, BOWLING_X, PITCH_Y, 1.0, teamColors[1]);
+    drawBowler(ctx, BOWLING_X, PITCH_Y - 40, 1.0, teamColors[1]);
     
-    const runProgress = elapsed > 600 ? Math.min((elapsed - 600) / 1400, 1) : 0;
-    drawBatsman(ctx, BATTING_X + runProgress * 130, PITCH_Y, elapsed < 500 ? -0.8 : -0.3, teamColors[0]);
+    // They attempt to run two, but get cut off right before the crease (1.8 runs)
+    drawRunners(ctx, elapsed, 1.8); 
 
     if (elapsed > 2200 && ballRef.current) {
       const throwProgress = Math.min((elapsed - 2200) / 600, 1);
