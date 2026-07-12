@@ -1,5 +1,5 @@
 // ============================================================
-// Grammar Cricket — Question Generator
+// Grammar Cricket - Question Generator
 // Procedurally generates grammar questions from data pools
 // ============================================================
 
@@ -8,7 +8,6 @@ import {
   VERBS,
   ADJECTIVES,
   POSSESSIONS,
-  ACTION_ENDINGS,
   FAMILY_RULES,
   SubjectEntry,
   VerbEntry,
@@ -39,11 +38,9 @@ export interface GeneratedQuestion {
   signature: string; // For deduplication
 }
 
-// ─────────────────────────────────────────────────────────────
 // Recent question signatures (prevent repeats)
-// ─────────────────────────────────────────────────────────────
 const recentSignatures: string[] = [];
-const MAX_HISTORY = 50;
+const MAX_HISTORY = 30; // Kept generous so unlimited variations can cycle comfortably
 
 function recordSignature(sig: string) {
   recentSignatures.push(sig);
@@ -56,9 +53,7 @@ function isRecent(sig: string): boolean {
   return recentSignatures.includes(sig);
 }
 
-// ─────────────────────────────────────────────────────────────
 // Random helpers
-// ─────────────────────────────────────────────────────────────
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -76,9 +71,7 @@ function makeLabel(idx: number): string {
   return ['A', 'B', 'C', 'D'][idx];
 }
 
-// ─────────────────────────────────────────────────────────────
 // Subject filtering
-// ─────────────────────────────────────────────────────────────
 function getSubjectsForDifficulty(difficulty: 'moderate' | 'difficult'): SubjectEntry[] {
   if (difficulty === 'moderate') {
     return SUBJECTS.filter(s => s.difficulty === 'moderate');
@@ -87,16 +80,7 @@ function getSubjectsForDifficulty(difficulty: 'moderate' | 'difficult'): Subject
   return SUBJECTS;
 }
 
-function getVerbsForDifficulty(difficulty: 'moderate' | 'difficult'): VerbEntry[] {
-  if (difficulty === 'moderate') {
-    return VERBS.filter(v => v.difficulty === 'moderate');
-  }
-  return VERBS;
-}
-
-// ─────────────────────────────────────────────────────────────
 // Build a complete three-sentence family for a subject
-// ─────────────────────────────────────────────────────────────
 interface FamilySentences {
   beSentence: string;
   haveSentence: string;
@@ -110,15 +94,19 @@ interface FamilySentences {
   possession: string;
 }
 
-function buildFamily(subject: SubjectEntry, verbEntry: VerbEntry, _difficulty: 'moderate' | 'difficult'): FamilySentences {
+function buildFamily(subject: SubjectEntry, verbEntry: VerbEntry): FamilySentences {
   const rules = FAMILY_RULES[subject.family];
-  const adjective = pick(ADJECTIVES).text;
-  const possession = pick(POSSESSIONS).text;
-  const actionEnding = pick(ACTION_ENDINGS).text;
 
+  // Pick semantic-matching traits to prevent "The box of footballs plays"
+  const validAdjs = ADJECTIVES.filter(a => a.tags.some(t => subject.tags.includes(t)));
+  const adjective = pick(validAdjs).text;
+
+  const validPossessions = POSSESSIONS.filter(p => p.tags.some(t => subject.tags.includes(t)));
+  const possession = pick(validPossessions).text;
+
+  const actionEnding = pick(verbEntry.endings);
   const actionVerb = subject.family === 'B' ? verbEntry.thirdPerson : verbEntry.base;
 
-  // Build natural action ending (some verbs don't pair with all endings)
   const beSentence = `${subject.text} ${rules.beForm} ${adjective}.`;
   const haveSentence = `${subject.text} ${rules.haveForm} ${possession}.`;
   const actionSentence = `${subject.text} ${actionVerb} ${actionEnding}.`;
@@ -137,9 +125,7 @@ function buildFamily(subject: SubjectEntry, verbEntry: VerbEntry, _difficulty: '
   };
 }
 
-// ─────────────────────────────────────────────────────────────
-// Generate wrong be-form distractors
-// ─────────────────────────────────────────────────────────────
+// Generate wrong forms
 function wrongBeForms(correct: string): string[] {
   const all = ['am', 'is', 'are'];
   return all.filter(f => f !== correct);
@@ -151,22 +137,19 @@ function wrongHaveForms(correct: string): string[] {
 }
 
 function wrongVerbForms(base: string, correct: string): string[] {
-  // For moderate: try base vs third-person
   const verb = VERBS.find(v => v.base === base);
   if (!verb) return [];
   const forms = [verb.base, verb.thirdPerson].filter(f => f !== correct);
   return forms;
 }
 
-// ─────────────────────────────────────────────────────────────
 // Type 1: Complete the Be Form
-// ─────────────────────────────────────────────────────────────
 function generateType1(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const correct = family.beForm;
-  const wrong = wrongBeForms(correct);
-  // Always 3 options for Type 1
-  const optionValues = shuffle([correct, ...wrong.slice(0, 2)]);
+  
+  const wrong = Array.from(new Set(wrongBeForms(correct)));
+  const optionValues = shuffle([correct, ...shuffle(wrong).slice(0, 2)]);
   const options: AnswerOption[] = optionValues.map((v, i) => ({
     label: makeLabel(i),
     value: v,
@@ -181,8 +164,8 @@ function generateType1(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
 
   const rules = FAMILY_RULES[subject.family];
   const explanation = buildExplanation(subject, rules, 'be');
-  const sig = `T1:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}`;
 
+  const sig = `T1:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}`;
   if (isRecent(sig)) return null;
 
   return {
@@ -200,15 +183,15 @@ function generateType1(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
 // Type 2: Complete Have or Has
-// ─────────────────────────────────────────────────────────────
 function generateType2(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const correct = family.haveForm;
+  
   const wrong = wrongHaveForms(correct);
-  const distractors = ['having', ...wrong];
+  const distractors = Array.from(new Set(['having', ...wrong]));
   const optionValues = shuffle([correct, ...shuffle(distractors).slice(0, 2)]);
+
   const options: AnswerOption[] = optionValues.map((v, i) => ({
     label: makeLabel(i),
     value: v,
@@ -223,7 +206,8 @@ function generateType2(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
 
   const rules = FAMILY_RULES[subject.family];
   const explanation = buildExplanation(subject, rules, 'have');
-  const sig = `T2:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}`;
+
+  const sig = `T2:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}`;
   if (isRecent(sig)) return null;
 
   return {
@@ -241,18 +225,19 @@ function generateType2(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
 // Type 3: Complete the Action Verb
-// ─────────────────────────────────────────────────────────────
 function generateType3(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const correct = family.actionVerb;
+  
   const wrongForms = wrongVerbForms(verbEntry.base, correct);
   const progressive = verbEntry.base.endsWith('e')
     ? verbEntry.base.slice(0, -1) + 'ing'
     : verbEntry.base + 'ing';
-  const distractors = [...wrongForms, progressive].filter(f => f !== correct);
-  const optionValues = shuffle([correct, ...shuffle(distractors).slice(0, 2)]);
+    
+  const dists = Array.from(new Set([...wrongForms, progressive].filter(f => f !== correct)));
+  const optionValues = shuffle([correct, ...shuffle(dists).slice(0, 2)]);
+
   const options: AnswerOption[] = optionValues.map((v, i) => ({
     label: makeLabel(i),
     value: v,
@@ -267,7 +252,8 @@ function generateType3(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
 
   const rules = FAMILY_RULES[subject.family];
   const explanation = buildExplanation(subject, rules, 'verb');
-  const sig = `T3:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}`;
+
+  const sig = `T3:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}`;
   if (isRecent(sig)) return null;
 
   return {
@@ -285,14 +271,11 @@ function generateType3(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
-// Type 4: Complete Two Missing Forms (be + have, or have + verb, or be + verb)
-// ─────────────────────────────────────────────────────────────
+// Type 4: Complete Two Missing Forms
 function generateType4(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const rules = FAMILY_RULES[subject.family];
 
-  // Pick which two blanks
   const blankChoices: [number, number][] = [[0, 1], [0, 2], [1, 2]];
   const [blank1, blank2] = pick(blankChoices);
 
@@ -301,23 +284,20 @@ function generateType4(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   let distractorPairs: string[];
 
   if (blank1 === 0 && blank2 === 1) {
-    // be + have
     correctPair = `${family.beForm} / ${family.haveForm}`;
     sentences = [
       `${subject.text} _____ ${family.adjective}.`,
       `${subject.text} _____ ${family.possession}.`,
       family.actionSentence,
     ];
-    // Generate wrong pairs
     const otherBe = wrongBeForms(family.beForm);
     const otherHave = wrongHaveForms(family.haveForm);
-    distractorPairs = [
+    distractorPairs = Array.from(new Set([
       `${otherBe[0]} / ${family.haveForm}`,
       `${family.beForm} / ${otherHave[0] || 'having'}`,
       `${otherBe[1] || otherBe[0]} / ${otherHave[0] || 'having'}`,
-    ];
+    ]));
   } else if (blank1 === 0 && blank2 === 2) {
-    // be + action verb
     correctPair = `${family.beForm} / ${family.actionVerb}`;
     sentences = [
       `${subject.text} _____ ${family.adjective}.`,
@@ -326,13 +306,12 @@ function generateType4(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
     ];
     const otherBe = wrongBeForms(family.beForm);
     const wrongVerb = wrongVerbForms(verbEntry.base, family.actionVerb);
-    distractorPairs = [
+    distractorPairs = Array.from(new Set([
       `${otherBe[0]} / ${family.actionVerb}`,
       `${family.beForm} / ${wrongVerb[0] || verbEntry.base + 'ing'}`,
       `${otherBe[1] || otherBe[0]} / ${wrongVerb[0] || verbEntry.base + 'ing'}`,
-    ];
+    ]));
   } else {
-    // have + action verb
     correctPair = `${family.haveForm} / ${family.actionVerb}`;
     sentences = [
       family.beSentence,
@@ -341,14 +320,16 @@ function generateType4(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
     ];
     const otherHave = wrongHaveForms(family.haveForm);
     const wrongVerb = wrongVerbForms(verbEntry.base, family.actionVerb);
-    distractorPairs = [
+    distractorPairs = Array.from(new Set([
       `${otherHave[0] || 'having'} / ${family.actionVerb}`,
       `${family.haveForm} / ${wrongVerb[0] || verbEntry.base + 'ing'}`,
       `${otherHave[0] || 'having'} / ${wrongVerb[0] || verbEntry.base + 'ing'}`,
-    ];
+    ]));
   }
 
-  const allOptions = shuffle([correctPair, ...distractorPairs.slice(0, 3)]);
+  const safeDistractors = distractorPairs.filter(d => d !== correctPair);
+  const allOptions = shuffle([correctPair, ...safeDistractors.slice(0, 3)]);
+
   const options: AnswerOption[] = allOptions.map((v, i) => ({
     label: makeLabel(i),
     value: v,
@@ -356,7 +337,7 @@ function generateType4(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   }));
 
   const explanation = buildExplanation(subject, rules, 'double');
-  const sig = `T4:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${blank1}${blank2}`;
+  const sig = `T4:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}:${blank1}${blank2}`;
   if (isRecent(sig)) return null;
 
   return {
@@ -374,34 +355,28 @@ function generateType4(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
 // Type 5: Choose the Correct Complete Family
-// ─────────────────────────────────────────────────────────────
 function generateType5(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const rules = FAMILY_RULES[subject.family];
 
-  const correctSetStr = `${family.beSentence} ${family.haveSentence} ${family.actionSentence}`;
-
-  // Generate wrong sets by swapping to wrong family forms
+  const correctSetStr = `${family.beSentence}\n${family.haveSentence}\n${family.actionSentence}`;
   const wrongFamilies: GrammarFamily[] = (['A', 'B', 'C'] as GrammarFamily[]).filter(f => f !== subject.family);
+  
   const wrongSets: string[] = wrongFamilies.map(wf => {
     const wr = FAMILY_RULES[wf];
     const wv = wf === 'B' ? verbEntry.thirdPerson : verbEntry.base;
-    const ws1 = `${subject.text} ${wr.beForm} ${family.adjective}.`;
-    const ws2 = `${subject.text} ${wr.haveForm} ${family.possession}.`;
-    const ws3 = `${subject.text} ${wv} ${family.actionEnding}.`;
-    return `${ws1} ${ws2} ${ws3}`;
+    return `${subject.text} ${wr.beForm} ${family.adjective}.\n${subject.text} ${wr.haveForm} ${family.possession}.\n${subject.text} ${wv} ${family.actionEnding}.`;
   });
 
-  // Mixed error set (one wrong, rest correct)
   const mixedBe = wrongBeForms(rules.beForm)[0];
-  const mixedSet = `${subject.text} ${mixedBe} ${family.adjective}. ${family.haveSentence} ${family.actionSentence}`;
+  const mixedSet = `${subject.text} ${mixedBe} ${family.adjective}.\n${family.haveSentence}\n${family.actionSentence}`;
+
+  const dists = Array.from(new Set([wrongSets[0], wrongSets[1], mixedSet])).filter(d => d !== correctSetStr);
 
   const allSets = shuffle([
     { text: correctSetStr, isCorrect: true },
-    { text: wrongSets[0], isCorrect: false },
-    { text: wrongSets[1] || mixedSet, isCorrect: false },
+    ...dists.slice(0, 2).map(text => ({ text, isCorrect: false }))
   ]);
 
   const options: AnswerOption[] = allSets.map((s, i) => ({
@@ -412,11 +387,10 @@ function generateType5(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
 
   const correctLabel = options.find(o => o.isCorrect)!.label;
   const explanation = `Option ${correctLabel} uses the correct forms: ${rules.beForm} / ${rules.haveForm} / ${verbEntry.base === family.actionVerb ? verbEntry.base : verbEntry.thirdPerson}.`;
-
-  const sig = `T5:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}`;
+  
+  const sig = `T5:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}`;
   if (isRecent(sig)) return null;
 
-  // For Type 5, sentences contain the full option text
   const sentences = [
     `Which set is correct for "${subject.text}"?`,
     '',
@@ -438,20 +412,14 @@ function generateType5(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
 // Type 6: Find the Incorrect Sentence
-// ─────────────────────────────────────────────────────────────
 function generateType6(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const rules = FAMILY_RULES[subject.family];
 
-  // The three correct sentences
   const allCorrect = [family.beSentence, family.haveSentence, family.actionSentence];
-
-  // Pick one to corrupt
   const errorIdx = Math.floor(Math.random() * 3);
   const erroredSentences = [...allCorrect];
-
   let errorExplanation = '';
 
   if (errorIdx === 0) {
@@ -475,7 +443,7 @@ function generateType6(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
     { label: 'C', value: 'Sentence 3', isCorrect: errorIdx === 2 },
   ];
 
-  const sig = `T6:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:err${errorIdx}`;
+  const sig = `T6:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}:err${errorIdx}`;
   if (isRecent(sig)) return null;
 
   return {
@@ -493,19 +461,17 @@ function generateType6(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
 // Type 7: Identify the Grammar Family
-// ─────────────────────────────────────────────────────────────
 function generateType7(subject: SubjectEntry, _verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
   const rules = FAMILY_RULES[subject.family];
-  const correctFull = `${rules.beForm} – ${rules.haveForm} – ${rules.verbForm === 'base' ? 'play' : 'plays'}`;
-
+  const correctFull = `${rules.beForm} + ${rules.haveForm} + ${rules.verbForm === 'base' ? 'play' : 'plays'}`;
+  
   const allFamilies: GrammarFamily[] = ['A', 'B', 'C'];
   const otherFamilies = allFamilies.filter(f => f !== subject.family);
 
   const buildPattern = (f: GrammarFamily) => {
     const r = FAMILY_RULES[f];
-    return `${r.beForm} – ${r.haveForm} – ${r.verbForm === 'base' ? 'play' : 'plays'}`;
+    return `${r.beForm} + ${r.haveForm} + ${r.verbForm === 'base' ? 'play' : 'plays'}`;
   };
 
   const optionValues = shuffle([
@@ -546,14 +512,11 @@ function generateType7(subject: SubjectEntry, _verbEntry: VerbEntry, diff: 'mode
   };
 }
 
-// ─────────────────────────────────────────────────────────────
-// Type 8: Repair the Family (find the wrong word)
-// ─────────────────────────────────────────────────────────────
+// Type 8: Repair the Family
 function generateType8(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moderate' | 'difficult'): GeneratedQuestion | null {
-  const family = buildFamily(subject, verbEntry, diff);
+  const family = buildFamily(subject, verbEntry);
   const rules = FAMILY_RULES[subject.family];
 
-  // Introduce one deliberate error
   const errorIdx = Math.floor(Math.random() * 3);
   const displaySentences = [family.beSentence, family.haveSentence, family.actionSentence];
 
@@ -561,47 +524,64 @@ function generateType8(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   let options: AnswerOption[];
 
   if (errorIdx === 0) {
-    // Wrong be form
     const wrongBe = wrongBeForms(rules.beForm)[Math.floor(Math.random() * 2)];
     displaySentences[0] = `${subject.text} ${wrongBe} ${family.adjective}.`;
     correctRepair = `${wrongBe} → ${rules.beForm}`;
+    
     const wrongHave = wrongHaveForms(rules.haveForm)[0];
     const wrongVerb = wrongVerbForms(verbEntry.base, family.actionVerb)[0] || verbEntry.base + 'ing';
+    
+    const dists = Array.from(new Set([
+      `${rules.haveForm} → ${wrongHave || 'having'}`,
+      `${family.actionVerb} → ${wrongVerb}`,
+      `${subject.text} → (no change needed)`
+    ])).filter(d => d !== correctRepair);
+
     options = shuffle([
-      { label: 'A', value: correctRepair, isCorrect: true },
-      { label: 'B', value: `${rules.haveForm} → ${wrongHave || 'having'}`, isCorrect: false },
-      { label: 'C', value: `${family.actionVerb} → ${wrongVerb}`, isCorrect: false },
-      { label: 'D', value: `${subject.text} → (no change needed)`, isCorrect: false },
+      { label: '', value: correctRepair, isCorrect: true },
+      ...dists.slice(0, 3).map(d => ({ label: '', value: d, isCorrect: false }))
     ]).map((o, i) => ({ ...o, label: makeLabel(i) }));
   } else if (errorIdx === 1) {
     const wrongHave = wrongHaveForms(rules.haveForm)[0];
     displaySentences[1] = `${subject.text} ${wrongHave} ${family.possession}.`;
     correctRepair = `${wrongHave} → ${rules.haveForm}`;
+    
     const wrongBe = wrongBeForms(rules.beForm)[0];
     const wrongVerb = wrongVerbForms(verbEntry.base, family.actionVerb)[0] || verbEntry.base + 'ing';
+
+    const dists = Array.from(new Set([
+      `${rules.beForm} → ${wrongBe}`,
+      `${family.actionVerb} → ${wrongVerb}`,
+      `Nothing → all correct`
+    ])).filter(d => d !== correctRepair);
+
     options = shuffle([
-      { label: 'A', value: `${rules.beForm} → ${wrongBe}`, isCorrect: false },
-      { label: 'B', value: correctRepair, isCorrect: true },
-      { label: 'C', value: `${family.actionVerb} → ${wrongVerb}`, isCorrect: false },
-      { label: 'D', value: 'Nothing — all correct', isCorrect: false },
+      { label: '', value: correctRepair, isCorrect: true },
+      ...dists.slice(0, 3).map(d => ({ label: '', value: d, isCorrect: false }))
     ]).map((o, i) => ({ ...o, label: makeLabel(i) }));
   } else {
     const wrongVerb = wrongVerbForms(verbEntry.base, family.actionVerb)[0] || (family.actionVerb + 'ing');
     displaySentences[2] = `${subject.text} ${wrongVerb} ${family.actionEnding}.`;
     correctRepair = `${wrongVerb} → ${family.actionVerb}`;
+    
     const wrongBe = wrongBeForms(rules.beForm)[0];
     const wrongHave = wrongHaveForms(rules.haveForm)[0];
+
+    const dists = Array.from(new Set([
+      `${rules.beForm} → ${wrongBe}`,
+      `${rules.haveForm} → ${wrongHave || 'having'}`,
+      `Nothing → all correct`
+    ])).filter(d => d !== correctRepair);
+
     options = shuffle([
-      { label: 'A', value: `${rules.beForm} → ${wrongBe}`, isCorrect: false },
-      { label: 'B', value: `${rules.haveForm} → ${wrongHave || 'having'}`, isCorrect: false },
-      { label: 'C', value: correctRepair, isCorrect: true },
-      { label: 'D', value: 'Nothing — all correct', isCorrect: false },
+      { label: '', value: correctRepair, isCorrect: true },
+      ...dists.slice(0, 3).map(d => ({ label: '', value: d, isCorrect: false }))
     ]).map((o, i) => ({ ...o, label: makeLabel(i) }));
   }
 
   const explanation = `The correct form is: ${rules.beForm} / ${rules.haveForm} / ${family.actionVerb}. ${correctRepair}.`;
-
-  const sig = `T8:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:err${errorIdx}`;
+  
+  const sig = `T8:${subject.text}:${family.adjective}:${family.possession}:${verbEntry.base}:${family.actionEnding}:err${errorIdx}`;
   if (isRecent(sig)) return null;
 
   return {
@@ -619,12 +599,11 @@ function generateType8(subject: SubjectEntry, verbEntry: VerbEntry, diff: 'moder
   };
 }
 
-// ─────────────────────────────────────────────────────────────
 // Explanation builder
-// ─────────────────────────────────────────────────────────────
 function buildExplanation(subject: SubjectEntry, rules: typeof FAMILY_RULES[GrammarFamily], focus: 'be' | 'have' | 'verb' | 'double'): string {
   const subjectText = subject.text;
   const hint = subject.displayHint ? ` (${subject.displayHint})` : '';
+  
   if (focus === 'be') {
     return `"${subjectText}"${hint} → use "${rules.beForm}". ${rules.explanation}`;
   } else if (focus === 'have') {
@@ -636,28 +615,39 @@ function buildExplanation(subject: SubjectEntry, rules: typeof FAMILY_RULES[Gram
   }
 }
 
-// ─────────────────────────────────────────────────────────────
 // Main Question Generator
-// ─────────────────────────────────────────────────────────────
-
 const TYPE_WEIGHTS_MODERATE: QuestionType[] = [1, 1, 2, 2, 3, 3, 4, 4, 6, 7];
 const TYPE_WEIGHTS_DIFFICULT: QuestionType[] = [1, 2, 3, 4, 4, 5, 6, 7, 8, 8];
 
 export function generateQuestion(difficulty: 'moderate' | 'difficult'): GeneratedQuestion {
   const effectiveDiff = difficulty;
   const subjects = getSubjectsForDifficulty(effectiveDiff);
-  const verbs = getVerbsForDifficulty(effectiveDiff);
   const typePool = effectiveDiff === 'moderate' ? TYPE_WEIGHTS_MODERATE : TYPE_WEIGHTS_DIFFICULT;
 
   let attempts = 0;
-  while (attempts < 100) {
+  // Increased loop limits to vastly improve uniqueness checking capability
+  while (attempts < 200) {
     attempts++;
     const subject = pick(subjects);
-    const verbEntry = pick(verbs);
+    
+    // Semantic constraint matching: match Verbs to Subject's animacy
+    let validVerbs = VERBS.filter(v =>
+      (v.difficulty === effectiveDiff || effectiveDiff === 'difficult') &&
+      v.tags.some(t => subject.tags.includes(t))
+    );
+
+    // If moderate, stick to moderate verb list, fallback to any valid if pool gets strangely constrained
+    if (effectiveDiff === 'moderate') {
+      const moderateVerbs = validVerbs.filter(v => v.difficulty === 'moderate');
+      if (moderateVerbs.length > 0) validVerbs = moderateVerbs;
+    }
+    // Deep fallback ensuring zero breaking constraints
+    if (validVerbs.length === 0) validVerbs = VERBS.filter(v => v.tags.some(t => subject.tags.includes(t)));
+
+    const verbEntry = pick(validVerbs);
     const qType = pick(typePool);
 
     let q: GeneratedQuestion | null = null;
-
     switch (qType) {
       case 1: q = generateType1(subject, verbEntry, effectiveDiff); break;
       case 2: q = generateType2(subject, verbEntry, effectiveDiff); break;
@@ -669,50 +659,35 @@ export function generateQuestion(difficulty: 'moderate' | 'difficult'): Generate
       case 8: q = generateType8(subject, verbEntry, effectiveDiff); break;
     }
 
-    if (q !== null) {
-      // Validate before returning
-      if (validateQuestion(q)) {
-        recordSignature(q.signature);
-        return q;
-      }
+    if (q !== null && validateQuestion(q)) {
+      recordSignature(q.signature);
+      return q;
     }
   }
 
-  // Fallback: simple Type 1 with guaranteed valid data
-  const fallbackSubject = SUBJECTS.find(s => s.text === 'He')!;
+  // Safe fallback guarantees no crashing. "The captain of the team" avoids any inanimate issues.
+  const fallbackSubject = SUBJECTS.find(s => s.text === 'The captain of the team')!;
   const fallbackVerb = VERBS.find(v => v.base === 'play')!;
   return generateType1(fallbackSubject, fallbackVerb, 'moderate')!;
 }
 
-// ─────────────────────────────────────────────────────────────
 // Grammar Validator
-// ─────────────────────────────────────────────────────────────
-
 export function validateQuestion(q: GeneratedQuestion): boolean {
-  // 1. Must have at least one option
   if (!q.options || q.options.length < 2) return false;
-
-  // 2. Must have exactly one correct answer
+  
   const correctCount = q.options.filter(o => o.isCorrect).length;
   if (correctCount !== 1) return false;
 
-  // 3. Correct answer must match correctAnswer field
   const correctOption = q.options.find(o => o.isCorrect);
   if (!correctOption) return false;
 
-  // 4. Must have an explanation
   if (!q.explanation) return false;
-
-  // 5. Subject must be set
   if (!q.subject) return false;
 
   return true;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Test Suite — Must Always Pass
-// ─────────────────────────────────────────────────────────────
-
+// Test Suite - Must Always Pass
 export interface TestResult {
   name: string;
   passed: boolean;
@@ -721,7 +696,7 @@ export interface TestResult {
 
 export function runTestSuite(): TestResult[] {
   const results: TestResult[] = [];
-
+  
   const testCases: Array<{ subject: string; expectedBe: string; expectedHave: string; expectedVerbForm: 'base' | 'third' }> = [
     { subject: 'I', expectedBe: 'am', expectedHave: 'have', expectedVerbForm: 'base' },
     { subject: 'He', expectedBe: 'is', expectedHave: 'has', expectedVerbForm: 'third' },
@@ -734,7 +709,7 @@ export function runTestSuite(): TestResult[] {
     { subject: 'The boys', expectedBe: 'are', expectedHave: 'have', expectedVerbForm: 'base' },
     { subject: 'Riya and Tina', expectedBe: 'are', expectedHave: 'have', expectedVerbForm: 'base' },
     { subject: 'Each child', expectedBe: 'is', expectedHave: 'has', expectedVerbForm: 'third' },
-    { subject: 'The box of footballs', expectedBe: 'is', expectedHave: 'has', expectedVerbForm: 'third' },
+    { subject: 'The captain of the team', expectedBe: 'is', expectedHave: 'has', expectedVerbForm: 'third' }, // Updated logic
   ];
 
   for (const tc of testCases) {
@@ -743,22 +718,23 @@ export function runTestSuite(): TestResult[] {
       results.push({ name: tc.subject, passed: false, message: `Subject not found: ${tc.subject}` });
       continue;
     }
+
     const rules = FAMILY_RULES[subjectEntry.family];
     const beOk = rules.beForm === tc.expectedBe;
     const haveOk = rules.haveForm === tc.expectedHave;
     const verbOk = rules.verbForm === tc.expectedVerbForm;
-
     const passed = beOk && haveOk && verbOk;
+
     results.push({
       name: tc.subject,
       passed,
       message: passed
-        ? `✓ ${tc.subject}: ${rules.beForm} / ${rules.haveForm} / ${rules.verbForm}`
-        : `✗ ${tc.subject}: got ${rules.beForm}/${rules.haveForm}/${rules.verbForm}, expected ${tc.expectedBe}/${tc.expectedHave}/${tc.expectedVerbForm}`,
+        ? `✅ ${tc.subject}: ${rules.beForm} / ${rules.haveForm} / ${rules.verbForm}`
+        : `❌ ${tc.subject}: got ${rules.beForm}/${rules.haveForm}/${rules.verbForm}, expected ${tc.expectedBe}/${tc.expectedHave}/${tc.expectedVerbForm}`,
     });
   }
 
-  // Negative tests — must never produce
+  // Negative tests - must never produce
   const forbiddenCombos = [
     { subject: 'I', be: 'is' },
     { subject: 'I', be: 'are' },
@@ -774,7 +750,7 @@ export function runTestSuite(): TestResult[] {
       results.push({
         name: `NEVER: ${fc.subject} ${fc.be}`,
         passed: !forbidden,
-        message: forbidden ? `✗ FAIL: ${fc.subject} incorrectly maps to ${fc.be}` : `✓ Correctly blocked: ${fc.subject} ≠ ${fc.be}`,
+        message: forbidden ? `❌ FAIL: ${fc.subject} incorrectly maps to ${fc.be}` : `✅ Correctly blocked: ${fc.subject} ≠ ${fc.be}`,
       });
     }
   }
